@@ -1,0 +1,2 @@
+Ref_project/STM32F407VET6_ADS1292/SD_DATA/20260916/ALIGNED0001.csv filter=lfs diff=lfs merge=lfs -text
+Ref_project/STM32F407VET6_ADS1292/SD_DATA/20260916/ALIGNED0002.csv filter=lfs diff=lfs merge=lfs -text

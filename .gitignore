@@ -1,0 +1,23 @@
+# Keil MDK build output
+MDK-ARM/STM32F407_Muscle/
+MDK-ARM/build_log.txt
+MDK-ARM/*.bak
+MDK-ARM/*.dep
+MDK-ARM/JLinkLog.txt
+*.uvguix.*
+
+# Debug
+*.d
+*.o
+*.crf
+*.lst
+*.map
+*.htm
+*.axf
+*.hex
+*.lnp
+*.iex
+
+# OS
+Thumbs.db
+Desktop.ini
