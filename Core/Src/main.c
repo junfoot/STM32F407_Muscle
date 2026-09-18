@@ -3,6 +3,23 @@
   ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
+  *
+  *  - TIM3 @ 2000 Hz starts a synchronous conversion on both AD7606 chips;
+  *    the BUSY falling edge (EXTI0) marks data ready.
+  *  - Each sample is streamed on USART1 as a VOFA+ JustFloat frame:
+  *    40 little-endian float32 (16 x ADC volts + 4 IMU x [roll,pitch,yaw,
+  *    ax,ay,az]) followed by the tail 00 00 80 7F. IMU values are held
+  *    between IMU updates (the wireless IMUs upload much slower than
+  *    2000 Hz).
+  *  - IMU data comes from the WT9011DCL-RF receiver attached to USB OTG FS
+  *    (USB Host CDC, CH340 @ 460800), parsed by imu_parser.
+  *  - USART1 RX takes line-based string commands (see cmd.h), e.g.
+  *    "DAC A 3.3" sets DAC channel A to +3.3 V.
+  *  - printf() is retargeted to USART1 through a non-blocking DMA ring
+  *    buffer (serial.c), so logging never stalls the 2000 Hz loop.
+  *
+  *  Interrupt priorities: TIM3 (conversion start) = 0, EXTI0 (BUSY) = 1,
+  *  USART1 = 2, DMA2 Stream7 (USART1 TX) = 3, OTG_FS (USB host) = 5.
   ******************************************************************************
   * @attention
   *
@@ -21,23 +38,48 @@
 #include "dma.h"
 #include "tim.h"
 #include "usart.h"
+#include "usb_host.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ad7606.h"
-#include "dac8562.h"
+#include "dac8563.h"
+#include "serial.h"
+#include "cmd.h"
+#include "imu_parser.h"
+#include "usbh_cdc.h"
+
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum
+{
+  CDC_STATE_IDLE = 0,
+  CDC_STATE_SET_LINE_CODING,
+  CDC_STATE_SET_CONTROL_LINE,
+  CDC_STATE_START_RECEPTION,
+  CDC_STATE_RUNNING
+} CDC_AppStateTypeDef;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ADC_TX_FRAME_LEN   38u   /* 2 header + 32 data + 2 seq + 2 CRC16 */
-#define DAC_CMD_LEN        7u    /* 55 AA 01 ch vH vL sum */
+#define IMU_COUNT                    4u      /* slaves with device_id 0..3        */
+#define IMU_FLOATS_PER_UNIT          6u      /* roll,pitch,yaw + ax,ay,az         */
+#define TX_CH_COUNT                  (AD7606_TOTAL_CH + IMU_COUNT * IMU_FLOATS_PER_UNIT)
+#define TX_FRAME_LEN                 (TX_CH_COUNT * 4u + 4u)   /* floats + tail  */
+#define ADC_LSB_VOLTS                (5.0f / 32768.0f)         /* +/-5 V range   */
+
+#define CDC_RX_BUF_SIZE              512U
+#define CDC_RX_TIMEOUT_MS            2000U
+#define CDC_REQ_SET_CONTROL_LINE_STATE 0x22U
+#define CDC_CTRL_LINE_DTR_RTS        0x0003U
+#define CDC_LINE_CODING_TIMEOUT_MS   2000U
+#define CDC_BAUDRATE                 460800U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,20 +90,32 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+extern ApplicationTypeDef Appli_state;
+extern USBH_HandleTypeDef hUsbHostFS;
+
 static volatile uint8_t g_conv_done = 0;          /* set by BUSY falling edge EXTI */
 static int16_t  g_adc_values[AD7606_TOTAL_CH];
-static uint8_t  g_tx_frame[ADC_TX_FRAME_LEN];
-static uint16_t g_tx_seq = 0;
+static float    g_tx_fdata[TX_CH_COUNT];
+static uint8_t  g_tx_frame[TX_FRAME_LEN];
+static const uint8_t g_tx_tail[4] = {0x00u, 0x00u, 0x80u, 0x7Fu};  /* JustFloat tail */
+
 static uint8_t  g_rx_byte;                        /* UART RX, one byte per IT  */
-static uint8_t  g_rx_buf[DAC_CMD_LEN];
-static uint8_t  g_rx_idx = 0;
+
+static uint8_t cdc_rx_buf[CDC_RX_BUF_SIZE];
+static CDC_LineCodingTypeDef cdc_linecoding;
+static volatile CDC_AppStateTypeDef cdc_state = CDC_STATE_IDLE;
+static volatile uint8_t  cdc_line_coding_done = 0;
+static volatile uint8_t  cdc_rx_ready = 0;
+static volatile uint32_t cdc_last_rx_tick = 0;
+static uint32_t cdc_line_coding_start_tick = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static uint16_t crc16_ccitt(const uint8_t *data, uint32_t len);
-static void protocol_rx_byte(uint8_t byte);
+static void CDC_Process(void);
+static USBH_StatusTypeDef CDC_SetControlLineState(USBH_HandleTypeDef *phost, uint16_t state);
+static void build_sample_frame(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -101,9 +155,14 @@ int main(void)
   MX_DMA_Init();
   MX_TIM3_Init();
   MX_USART1_UART_Init();
+  MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
   AD7606_Init();
-  DAC8562_Init();
+  DAC8563_Init();
+
+  printf("\r\nSTM32F407_Muscle ready. USART1 @ 5250000 8N1, JustFloat %u ch @ 2000 Hz\r\n",
+         (unsigned int)TX_CH_COUNT);
+  printf("Type HELP for commands.\r\n");
 
   HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
   HAL_TIM_Base_Start_IT(&htim3);
@@ -113,6 +172,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    MX_USB_HOST_Process();
+    CDC_Process();
+
     if (g_conv_done != 0u)
     {
       g_conv_done = 0u;
@@ -121,28 +183,11 @@ int main(void)
          interrupt/DMA driven so nothing else stalls */
       AD7606_ReadAll(g_adc_values);
 
-      if (huart1.gState == HAL_UART_STATE_READY)
-      {
-        uint16_t crc;
-
-        g_tx_frame[0] = 0xAAu;
-        g_tx_frame[1] = 0x55u;
-        for (uint32_t i = 0u; i < AD7606_TOTAL_CH; i++)
-        {
-          g_tx_frame[2u + 2u * i] = (uint8_t)((uint16_t)g_adc_values[i] & 0xFFu);
-          g_tx_frame[3u + 2u * i] = (uint8_t)((uint16_t)g_adc_values[i] >> 8);
-        }
-        g_tx_frame[34] = (uint8_t)(g_tx_seq & 0xFFu);
-        g_tx_frame[35] = (uint8_t)(g_tx_seq >> 8);
-        g_tx_seq++;
-
-        crc = crc16_ccitt(g_tx_frame, 36u);
-        g_tx_frame[36] = (uint8_t)(crc & 0xFFu);
-        g_tx_frame[37] = (uint8_t)(crc >> 8);
-
-        HAL_UART_Transmit_DMA(&huart1, g_tx_frame, ADC_TX_FRAME_LEN);
-      }
+      build_sample_frame();
+      (void)Serial_Write(g_tx_frame, TX_FRAME_LEN);
     }
+
+    Cmd_Process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -174,7 +219,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 4;
   RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -185,7 +230,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
@@ -197,76 +242,145 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 /**
-  * @brief  CRC16-CCITT (poly 0x1021, init 0xFFFF), little-endian on the wire.
+  * @brief  Fill g_tx_frame with one JustFloat frame: 16 ADC channels in
+  *         volts, then for each IMU (id 0..3) roll/pitch/yaw in degrees and
+  *         ax/ay/az in g. IMU fields hold their last value between updates.
   */
-static uint16_t crc16_ccitt(const uint8_t *data, uint32_t len)
+static void build_sample_frame(void)
 {
-  uint16_t crc = 0xFFFFu;
+  uint32_t idx = 0u;
 
-  for (uint32_t i = 0u; i < len; i++)
+  for (uint32_t i = 0u; i < AD7606_TOTAL_CH; i++)
   {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint32_t b = 0u; b < 8u; b++)
-    {
-      crc = (uint16_t)((crc & 0x8000u) != 0u ? (crc << 1) ^ 0x1021u : crc << 1);
-    }
+    g_tx_fdata[idx++] = (float)g_adc_values[i] * ADC_LSB_VOLTS;
   }
-  return crc;
+
+  for (uint32_t id = 0u; id < IMU_COUNT; id++)
+  {
+    IMU_Data_t *d = IMU_GetSlaveData((uint8_t)id);
+
+    /* guard against the parser updating the record from the OTG_FS ISR */
+    __disable_irq();
+    g_tx_fdata[idx++] = d->angle_deg[0];
+    g_tx_fdata[idx++] = d->angle_deg[1];
+    g_tx_fdata[idx++] = d->angle_deg[2];
+    g_tx_fdata[idx++] = d->accel_g[0];
+    g_tx_fdata[idx++] = d->accel_g[1];
+    g_tx_fdata[idx++] = d->accel_g[2];
+    __enable_irq();
+  }
+
+  memcpy(g_tx_frame, g_tx_fdata, TX_CH_COUNT * 4u);
+  memcpy(&g_tx_frame[TX_CH_COUNT * 4u], g_tx_tail, 4u);
 }
 
 /**
-  * @brief  Host -> MCU frame: 55 AA 01 <ch> <valueH> <valueL> <sum of the
-  *         previous 6 bytes>. ch: 0 = DAC-A, 1 = DAC-B, 2 = both.
+  * @brief  Advance the USB CDC state machine (CH340 of the 9011RF receiver).
   */
-static void protocol_rx_byte(uint8_t byte)
+static void CDC_Process(void)
 {
-  switch (g_rx_idx)
+  if (Appli_state == APPLICATION_READY)
   {
-    case 0u:
-      if (byte == 0x55u)
-      {
-        g_rx_buf[0] = byte;
-        g_rx_idx = 1u;
-      }
-      break;
-
-    case 1u:
-      if (byte == 0xAAu)
-      {
-        g_rx_buf[1] = byte;
-        g_rx_idx = 2u;
-      }
-      else
-      {
-        g_rx_idx = (byte == 0x55u) ? 1u : 0u;
-      }
-      break;
-
-    case 2u:
-    case 3u:
-    case 4u:
-    case 5u:
-      g_rx_buf[g_rx_idx++] = byte;
-      break;
-
-    case 6u:
+    switch (cdc_state)
     {
-      uint8_t sum = 0u;
-      for (uint32_t i = 0u; i < 6u; i++)
-      {
-        sum = (uint8_t)(sum + g_rx_buf[i]);
-      }
-      if ((sum == byte) && (g_rx_buf[2] == 0x01u) && (g_rx_buf[3] <= DAC8562_CH_BOTH))
-      {
-        DAC8562_SetOutput(g_rx_buf[3], (uint16_t)((uint16_t)g_rx_buf[4] << 8 | g_rx_buf[5]));
-      }
-      g_rx_idx = 0u;
-      break;
-    }
+      case CDC_STATE_IDLE:
+        cdc_linecoding.b.dwDTERate = CDC_BAUDRATE;
+        cdc_linecoding.b.bCharFormat = 0U;
+        cdc_linecoding.b.bParityType = 0U;
+        cdc_linecoding.b.bDataBits = 8U;
+        cdc_line_coding_done = 0U;
+        cdc_line_coding_start_tick = HAL_GetTick();
+        USBH_CDC_SetLineCoding(&hUsbHostFS, &cdc_linecoding);
+        cdc_state = CDC_STATE_SET_LINE_CODING;
+        break;
 
-    default:
-      g_rx_idx = 0u;
-      break;
+      case CDC_STATE_SET_LINE_CODING:
+        if (cdc_line_coding_done != 0U)
+        {
+          cdc_state = CDC_STATE_SET_CONTROL_LINE;
+        }
+        else if ((HAL_GetTick() - cdc_line_coding_start_tick) > CDC_LINE_CODING_TIMEOUT_MS)
+        {
+          printf("[WARN] CDC SetLineCoding timeout, proceeding\r\n");
+          cdc_state = CDC_STATE_SET_CONTROL_LINE;
+        }
+        break;
+
+      case CDC_STATE_SET_CONTROL_LINE:
+      {
+        USBH_StatusTypeDef st = CDC_SetControlLineState(&hUsbHostFS, CDC_CTRL_LINE_DTR_RTS);
+        if (st != USBH_BUSY)
+        {
+          cdc_state = CDC_STATE_START_RECEPTION;
+        }
+        break;
+      }
+
+      case CDC_STATE_START_RECEPTION:
+        if (USBH_CDC_Receive(&hUsbHostFS, cdc_rx_buf, CDC_RX_BUF_SIZE) == USBH_OK)
+        {
+          cdc_last_rx_tick = HAL_GetTick();
+          cdc_state = CDC_STATE_RUNNING;
+        }
+        break;
+
+      case CDC_STATE_RUNNING:
+        if ((HAL_GetTick() - cdc_last_rx_tick) > CDC_RX_TIMEOUT_MS)
+        {
+          printf("[WARN] CDC RX timeout, re-arming reception\r\n");
+          cdc_state = CDC_STATE_START_RECEPTION;
+        }
+        break;
+
+      default:
+        cdc_state = CDC_STATE_IDLE;
+        break;
+    }
+  }
+  else
+  {
+    cdc_state = CDC_STATE_IDLE;
+    cdc_rx_ready = 0U;
+    cdc_line_coding_done = 0U;
+  }
+}
+
+/**
+  * @brief  SET_CONTROL_LINE_STATE class request (DTR | RTS), needed by the
+  *         CH340 before it forwards data.
+  */
+static USBH_StatusTypeDef CDC_SetControlLineState(USBH_HandleTypeDef *phost, uint16_t state)
+{
+  phost->Control.setup.b.bmRequestType = USB_H2D | USB_REQ_TYPE_CLASS | USB_REQ_RECIPIENT_INTERFACE;
+  phost->Control.setup.b.bRequest = CDC_REQ_SET_CONTROL_LINE_STATE;
+  phost->Control.setup.b.wValue.w = state;
+  phost->Control.setup.b.wIndex.w = 0x0000U;
+  phost->Control.setup.b.wLength.w = 0U;
+
+  return USBH_CtlReq(phost, NULL, 0U);
+}
+
+void USBH_CDC_LineCodingChanged(USBH_HandleTypeDef *phost)
+{
+  (void)phost;
+  cdc_line_coding_done = 1U;
+}
+
+void USBH_CDC_ReceiveCallback(USBH_HandleTypeDef *phost)
+{
+  uint16_t len = USBH_CDC_GetLastReceivedDataSize(phost);
+
+  if (len > 0U)
+  {
+    cdc_last_rx_tick = HAL_GetTick();
+    cdc_rx_ready = 1U;
+    IMU_ParseStream(cdc_rx_buf, len);
+  }
+
+  if (USBH_CDC_Receive(phost, cdc_rx_buf, CDC_RX_BUF_SIZE) != USBH_OK)
+  {
+    cdc_state = CDC_STATE_START_RECEPTION;
+    cdc_rx_ready = 0U;
   }
 }
 
@@ -298,8 +412,16 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1)
   {
-    protocol_rx_byte(g_rx_byte);
+    Cmd_RxByte(g_rx_byte);
     HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
+  }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART1)
+  {
+    Serial_TxCpltHandler();
   }
 }
 
@@ -307,7 +429,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1)
   {
-    g_rx_idx = 0u;
     HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
   }
 }
@@ -331,7 +452,7 @@ void Error_Handler(void)
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
+  * @param  file: pointer to the file name
   * @param  line: assert_param error line source number
   * @retval None
   */
