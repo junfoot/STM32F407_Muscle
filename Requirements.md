@@ -12,5 +12,17 @@
 - 将printf函数重定向到usart1
 - DAC实际使用的【安富莱】DAC8563_DAC模块 ，输出映射到了正负10V
 - 参考工程STM32F407_9011RF，集成IMU读取功能，并实时通过串口输出。这个频率应该低于ADC输出，同步到2000hz后，中间不变的值保持一样即可。一共有0-3号4颗IMU
+- IMU参数发送三个角度、三个加速度即可
 - 管理好优先级，一般ADC优先级会高，不要发生阻塞
 - 串口下发的指令用易写的字符串形式
+- 串口上传格式：采样数据解析#
+数据格式#
+#define CH_COUNT 通道数量
+struct Frame {
+    float fdata[CH_COUNT];
+    unsigned char tail[4]{0x00, 0x00, 0x80, 0x7f};
+};
+fdata为小端浮点数组，里面放着需要发送的CH_COUNT个数据。
+tail为帧尾。
+发送4个曲线的数据长这个样子
+bf 10 59 3f b1 02 95 3e 57 a6 16 be 7b 4d 7f bf 00 00 80 7f

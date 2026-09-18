@@ -91,6 +91,19 @@ static void IMU_ParseFrame(uint8_t device_id)
 
   new_data_mask |= (1UL << idx);
   slave_last_rx_tick[idx] = HAL_GetTick();
+
+  IMU_RawFrameHook(device_id, data_buf, IMU_FRAME_DATA_LEN);
+}
+
+/**
+  * @brief  Weak hook called with the raw 26-byte payload of every parsed
+  *         IMU frame. Overridden by recorder.c for SD logging.
+  */
+__weak void IMU_RawFrameHook(uint8_t device_id, const uint8_t *payload, uint16_t len)
+{
+  (void)device_id;
+  (void)payload;
+  (void)len;
 }
 
 /* Exported functions --------------------------------------------------------*/

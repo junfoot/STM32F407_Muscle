@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../USB_HOST/App;../USB_HOST/Target;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/ST/STM32_USB_Host_Library/Core/Inc;../Middlewares/ST/STM32_USB_Host_Library/Class/CDC/Inc;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include</IncludePath>
+              <IncludePath>../Core/Inc;../USB_HOST/App;../USB_HOST/Target;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/ST/STM32_USB_Host_Library/Core/Inc;../Middlewares/ST/STM32_USB_Host_Library/Class/CDC/Inc;../Middlewares/Third_Party/FatFs/src;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -442,6 +442,21 @@
               <FileName>imu_parser.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/imu_parser.c</FilePath>
+            </File>
+            <File>
+              <FileName>sdio.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/sdio.c</FilePath>
+            </File>
+            <File>
+              <FileName>sd_diskio.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/sd_diskio.c</FilePath>
+            </File>
+            <File>
+              <FileName>recorder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/recorder.c</FilePath>
             </File>
             <File>
               <FileName>stm32f4xx_it.c</FileName>
@@ -548,6 +563,16 @@
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c</FilePath>
             </File>
+            <File>
+              <FileName>stm32f4xx_hal_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_sd.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f4xx_ll_sdmmc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_sdmmc.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -607,6 +632,16 @@
               <FileName>usbh_cdc.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/ST/STM32_USB_Host_Library/Class/CDC/Src/usbh_cdc.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Middlewares/FatFs</GroupName>
+          <Files>
+            <File>
+              <FileName>ff.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/FatFs/src/ff.c</FilePath>
             </File>
           </Files>
         </Group>

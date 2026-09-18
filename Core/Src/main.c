@@ -5,21 +5,25 @@
   * @brief          : Main program body
   *
   *  - TIM3 @ 2000 Hz starts a synchronous conversion on both AD7606 chips;
-  *    the BUSY falling edge (EXTI0) marks data ready.
-  *  - Each sample is streamed on USART1 as a VOFA+ JustFloat frame:
+  *    the BUSY falling edge (EXTI0) reads all 16 channels right in the ISR
+  *    and pushes the raw frame into the SD recorder ring, so samples are
+  *    captured completely even while a FatFs write blocks the main loop.
+  *  - 200 Hz of the stream goes to USART1 as a VOFA+ JustFloat frame:
   *    40 little-endian float32 (16 x ADC volts + 4 IMU x [roll,pitch,yaw,
   *    ax,ay,az]) followed by the tail 00 00 80 7F. IMU values are held
-  *    between IMU updates (the wireless IMUs upload much slower than
-  *    2000 Hz).
+  *    between IMU updates (the wireless IMUs upload much slower).
+  *  - Every ADC sample and every raw IMU frame is also logged to the SD
+  *    card (recorder.c, LOGxxxx.BIN) with a common 2000 Hz sequence number.
   *  - IMU data comes from the WT9011DCL-RF receiver attached to USB OTG FS
   *    (USB Host CDC, CH340 @ 460800), parsed by imu_parser.
   *  - USART1 RX takes line-based string commands (see cmd.h), e.g.
-  *    "DAC A 3.3" sets DAC channel A to +3.3 V.
+  *    "DAC A 3.3" sets DAC channel A to +3.3 V, "REC STOP" stops logging.
   *  - printf() is retargeted to USART1 through a non-blocking DMA ring
   *    buffer (serial.c), so logging never stalls the 2000 Hz loop.
   *
   *  Interrupt priorities: TIM3 (conversion start) = 0, EXTI0 (BUSY) = 1,
   *  USART1 = 2, DMA2 Stream7 (USART1 TX) = 3, OTG_FS (USB host) = 5.
+  *  SDIO runs in polling mode (no IRQ).
   ******************************************************************************
   * @attention
   *
@@ -38,6 +42,7 @@
 #include "dma.h"
 #include "tim.h"
 #include "usart.h"
+#include "sdio.h"
 #include "usb_host.h"
 #include "gpio.h"
 
@@ -48,6 +53,7 @@
 #include "serial.h"
 #include "cmd.h"
 #include "imu_parser.h"
+#include "recorder.h"
 #include "usbh_cdc.h"
 
 #include <stdio.h>
@@ -72,6 +78,7 @@ typedef enum
 #define IMU_FLOATS_PER_UNIT          6u      /* roll,pitch,yaw + ax,ay,az         */
 #define TX_CH_COUNT                  (AD7606_TOTAL_CH + IMU_COUNT * IMU_FLOATS_PER_UNIT)
 #define TX_FRAME_LEN                 (TX_CH_COUNT * 4u + 4u)   /* floats + tail  */
+#define TX_DECIMATION                10u     /* 2000 Hz / 10 = 200 Hz on UART  */
 #define ADC_LSB_VOLTS                (5.0f / 32768.0f)         /* +/-5 V range   */
 
 #define CDC_RX_BUF_SIZE              512U
@@ -93,11 +100,13 @@ typedef enum
 extern ApplicationTypeDef Appli_state;
 extern USBH_HandleTypeDef hUsbHostFS;
 
-static volatile uint8_t g_conv_done = 0;          /* set by BUSY falling edge EXTI */
+volatile uint32_t g_sample_seq = 0u;        /* 2000 Hz tick, shared with recorder */
+static volatile uint8_t g_new_sample = 0u;  /* set by EXTI ISR after ADC read   */
 static int16_t  g_adc_values[AD7606_TOTAL_CH];
 static float    g_tx_fdata[TX_CH_COUNT];
 static uint8_t  g_tx_frame[TX_FRAME_LEN];
 static const uint8_t g_tx_tail[4] = {0x00u, 0x00u, 0x80u, 0x7Fu};  /* JustFloat tail */
+static uint32_t g_next_uart_seq = 0u;
 
 static uint8_t  g_rx_byte;                        /* UART RX, one byte per IT  */
 
@@ -155,12 +164,14 @@ int main(void)
   MX_DMA_Init();
   MX_TIM3_Init();
   MX_USART1_UART_Init();
+  MX_SDIO_SD_Init();
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
   AD7606_Init();
   DAC8563_Init();
+  Recorder_Init();
 
-  printf("\r\nSTM32F407_Muscle ready. USART1 @ 5250000 8N1, JustFloat %u ch @ 2000 Hz\r\n",
+  printf("\r\nSTM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 200 Hz\r\n",
          (unsigned int)TX_CH_COUNT);
   printf("Type HELP for commands.\r\n");
 
@@ -174,14 +185,12 @@ int main(void)
   {
     MX_USB_HOST_Process();
     CDC_Process();
+    Recorder_Process();
 
-    if (g_conv_done != 0u)
+    if ((g_new_sample != 0u) && ((int32_t)(g_sample_seq - g_next_uart_seq) >= 0))
     {
-      g_conv_done = 0u;
-
-      /* ~120 us blocking read of both chips; everything else stays
-         interrupt/DMA driven so nothing else stalls */
-      AD7606_ReadAll(g_adc_values);
+      g_new_sample = 0u;
+      g_next_uart_seq = g_sample_seq + TX_DECIMATION;
 
       build_sample_frame();
       (void)Serial_Write(g_tx_frame, TX_FRAME_LEN);
@@ -250,10 +259,13 @@ static void build_sample_frame(void)
 {
   uint32_t idx = 0u;
 
+  /* latest ADC sample is written by the EXTI ISR; copy it atomically */
+  __disable_irq();
   for (uint32_t i = 0u; i < AD7606_TOTAL_CH; i++)
   {
     g_tx_fdata[idx++] = (float)g_adc_values[i] * ADC_LSB_VOLTS;
   }
+  __enable_irq();
 
   for (uint32_t id = 0u; id < IMU_COUNT; id++)
   {
@@ -385,26 +397,44 @@ void USBH_CDC_ReceiveCallback(USBH_HandleTypeDef *phost)
 }
 
 /**
-  * @brief  TIM3 update (2000 Hz): start a conversion on both AD7606 chips.
+  * @brief  TIM3 update (2000 Hz): bump the global sample sequence number and
+  *         start a conversion on both AD7606 chips.
   */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim->Instance == TIM3)
   {
+    g_sample_seq++;
     AD7606_StartConversion();
   }
 }
 
 /**
-  * @brief  AD7606 BUSY falling edge: conversion finished, data ready.
-  *         Both chips convert on the same CONVST pulse, so the chip #1 BUSY
-  *         edge covers both (EXTI7/NVIC for chip #2 is intentionally unused).
+  * @brief  AD7606 BUSY falling edge: conversion finished. Read all 16
+  *         channels right here (~120 us) and push the raw sample into the
+  *         SD recorder ring, so no sample is lost while the main loop is
+  *         busy with a FatFs/SDIO write. Both chips convert on the same
+  *         CONVST pulse, so the chip #1 BUSY edge covers both.
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == AD1_BUSY_Pin)
   {
-    g_conv_done = 1u;
+    AD7606_ReadAll((int16_t *)g_adc_values);
+    Recorder_PushAdc(g_sample_seq, g_adc_values);
+    g_new_sample = 1u;
+  }
+}
+
+/**
+  * @brief  Raw IMU frame hook (overrides the weak one in imu_parser.c):
+  *         log the untouched 26-byte payload with the current ADC tick.
+  */
+void IMU_RawFrameHook(uint8_t device_id, const uint8_t *payload, uint16_t len)
+{
+  if (len == 26u)
+  {
+    Recorder_PushImu(g_sample_seq, device_id, payload);
   }
 }
 

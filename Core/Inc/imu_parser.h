@@ -70,6 +70,12 @@ void IMU_ClearSlaveNewData(uint8_t device_id);
   */
 uint8_t IMU_IsSlaveOnline(uint8_t device_id);
 
+/**
+  * @brief  Hook invoked with the raw payload of every parsed frame
+  *         (weak default does nothing; recorder.c overrides it).
+  */
+void IMU_RawFrameHook(uint8_t device_id, const uint8_t *payload, uint16_t len);
+
 #ifdef __cplusplus
 }
 #endif

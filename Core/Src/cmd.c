@@ -12,6 +12,7 @@
 #include "cmd.h"
 #include "dac8563.h"
 #include "imu_parser.h"
+#include "recorder.h"
 #include "serial.h"
 
 #include <stdio.h>
@@ -183,12 +184,37 @@ static void cmd_handle(char *line)
     return;
   }
 
+  if (cmd_str_equal(verb, "REC"))
+  {
+    if (fields < 2)
+    {
+      printf("REC: %s, %lu bytes written, %lu records dropped\r\n",
+             (Recorder_IsActive() != 0u) ? "logging" : "idle",
+             (unsigned long)Recorder_GetBytesWritten(),
+             (unsigned long)Recorder_GetDropped());
+    }
+    else if (cmd_str_equal(arg1, "START"))
+    {
+      Recorder_Start();
+    }
+    else if (cmd_str_equal(arg1, "STOP"))
+    {
+      Recorder_Stop();
+    }
+    else
+    {
+      printf("ERR: usage REC [START|STOP]\r\n");
+    }
+    return;
+  }
+
   if (cmd_str_equal(verb, "HELP") || cmd_str_equal(verb, "?"))
   {
     printf("Commands (end with CR/LF):\r\n");
     printf("  DAC <A|B|AB> <volts>   set DAC output voltage, -10..+10 V\r\n");
     printf("  DACR <A|B|AB> <code>   set DAC raw code, 0..65535\r\n");
     printf("  IMU                    show IMU0..3 online state and data\r\n");
+    printf("  REC [START|STOP]       SD recorder status / control\r\n");
     printf("  HELP                   this list\r\n");
     printf("  TX drops: %lu bytes\r\n", (unsigned long)Serial_GetDropCount());
     return;

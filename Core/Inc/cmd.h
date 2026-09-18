@@ -10,6 +10,9 @@
   *            DAC AB 0       -> both channels output 0 V
   *            DACR A 49152   -> raw 16-bit code (0x0000=-10V .. 0xFFFF=+10V)
   *            IMU            -> print online state and latest data of IMU 0-3
+  *            REC            -> SD recorder status
+  *            REC START      -> start logging to a new LOGxxxx.BIN
+  *            REC STOP       -> flush and close the current log file
   *            HELP           -> print this list
   ******************************************************************************
   */
