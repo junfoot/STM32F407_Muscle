@@ -26,12 +26,14 @@ extern "C" {
 
 #include "main.h"
 
-/**
-  * @brief  Feed one received byte (call from the UART RX callback).
-  *         Completes a command line on CR/LF, which is then handled in
-  *         Cmd_Process().
-  */
-void Cmd_RxByte(uint8_t byte);
+/** Start the USART1 Receive-to-IDLE circular DMA command receiver. */
+void Cmd_Init(void);
+
+/** Forward a HAL Receive-to-IDLE event to the command receiver. */
+void Cmd_RxEvent(uint16_t dma_position);
+
+/** Recover the command receiver after a UART/DMA error. */
+void Cmd_RxError(void);
 
 /**
   * @brief  Execute a pending command line, if any. Call from the main loop.

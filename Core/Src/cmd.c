@@ -14,6 +14,7 @@
 #include "imu_parser.h"
 #include "recorder.h"
 #include "serial.h"
+#include "usart.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,59 +23,122 @@
 /* Private define ------------------------------------------------------------*/
 #define CMD_LINE_LEN   64u
 #define CMD_IMU_COUNT  4u
+#define CMD_DMA_SIZE   256u
+#define CMD_RX_RING_SIZE 512u
 
 /* Private variables ---------------------------------------------------------*/
-static char    cmd_line[CMD_LINE_LEN];
+static uint8_t cmd_dma_buf[CMD_DMA_SIZE];
+static uint8_t cmd_rx_ring[CMD_RX_RING_SIZE];
+static volatile uint16_t cmd_rx_head = 0u;
+static volatile uint16_t cmd_rx_tail = 0u;
+static volatile uint32_t cmd_rx_dropped = 0u;
+static volatile uint32_t cmd_rx_errors = 0u;
+static char cmd_line[CMD_LINE_LEN];
 static uint8_t cmd_len = 0u;
-static volatile uint8_t cmd_ready = 0u;
+static uint8_t cmd_discard_line = 0u;
 
 /* Private function prototypes -----------------------------------------------*/
 static int  cmd_str_equal(const char *a, const char *b);
 static void cmd_handle(char *line);
+static void cmd_rx_push(const uint8_t *data, uint16_t len);
+static void cmd_receive_start(void);
 
-void Cmd_RxByte(uint8_t byte)
+static void cmd_receive_start(void)
 {
-  if (cmd_ready != 0u)
+  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, cmd_dma_buf, CMD_DMA_SIZE) == HAL_OK)
   {
-    return;   /* previous line not consumed yet: drop input */
+    /* IDLE and transfer-complete events are sufficient in normal mode. */
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   }
+}
 
-  if ((byte == (uint8_t)'\r') || (byte == (uint8_t)'\n'))
+void Cmd_Init(void)
+{
+  cmd_rx_head = 0u;
+  cmd_rx_tail = 0u;
+  cmd_rx_dropped = 0u;
+  cmd_rx_errors = 0u;
+  cmd_len = 0u;
+  cmd_discard_line = 0u;
+  cmd_receive_start();
+}
+
+static void cmd_rx_push(const uint8_t *data, uint16_t len)
+{
+  for (uint16_t i = 0u; i < len; i++)
   {
-    if (cmd_len > 0u)
+    uint16_t head = cmd_rx_head;
+    uint16_t next = (uint16_t)((head + 1u) % CMD_RX_RING_SIZE);
+
+    if (next == cmd_rx_tail)
     {
-      cmd_line[cmd_len] = '\0';
-      cmd_ready = 1u;
+      cmd_rx_dropped++;
+      continue;
     }
-    return;
+
+    cmd_rx_ring[head] = data[i];
+    __DMB();
+    cmd_rx_head = next;
+  }
+}
+
+void Cmd_RxEvent(uint16_t dma_position)
+{
+  uint16_t length = dma_position;
+
+  if (length > CMD_DMA_SIZE)
+  {
+    length = CMD_DMA_SIZE;
   }
 
-  if (cmd_len < (CMD_LINE_LEN - 1u))
+  if (length > 0u)
   {
-    cmd_line[cmd_len++] = (char)byte;
+    cmd_rx_push(cmd_dma_buf, length);
   }
-  else
-  {
-    cmd_len = 0u;   /* overlong line: discard */
-  }
+  cmd_receive_start();
+}
+
+void Cmd_RxError(void)
+{
+  cmd_rx_errors++;
+  (void)HAL_UART_AbortReceive(&huart1);
+  cmd_receive_start();
 }
 
 void Cmd_Process(void)
 {
-  char line[CMD_LINE_LEN];
-
-  if (cmd_ready == 0u)
+  while (cmd_rx_tail != cmd_rx_head)
   {
-    return;
+    uint8_t byte = cmd_rx_ring[cmd_rx_tail];
+    cmd_rx_tail = (uint16_t)((cmd_rx_tail + 1u) % CMD_RX_RING_SIZE);
+
+    if ((byte == (uint8_t)'\r') || (byte == (uint8_t)'\n'))
+    {
+      if (cmd_discard_line != 0u)
+      {
+        cmd_discard_line = 0u;
+        cmd_len = 0u;
+      }
+      else if (cmd_len > 0u)
+      {
+        cmd_line[cmd_len] = '\0';
+        cmd_len = 0u;
+        cmd_handle(cmd_line);
+      }
+    }
+    else if (cmd_discard_line == 0u)
+    {
+      if (cmd_len < (CMD_LINE_LEN - 1u))
+      {
+        cmd_line[cmd_len++] = (char)byte;
+      }
+      else
+      {
+        cmd_len = 0u;
+        cmd_discard_line = 1u;
+      }
+    }
   }
-
-  __disable_irq();
-  memcpy(line, cmd_line, (size_t)cmd_len + 1u);
-  cmd_len = 0u;
-  cmd_ready = 0u;
-  __enable_irq();
-
-  cmd_handle(line);
 }
 
 /**
@@ -227,7 +291,10 @@ static void cmd_handle(char *line)
     printf("  IMU                    show IMU0..3 online state and data\r\n");
     printf("  REC [START|STOP]       SD recorder status / control\r\n");
     printf("  HELP                   this list\r\n");
-    printf("  TX drops: %lu bytes\r\n", (unsigned long)Serial_GetDropCount());
+    printf("  UART diagnostics: RX errors=%lu, RX dropped=%lu, TX dropped=%lu bytes\r\n",
+           (unsigned long)cmd_rx_errors,
+           (unsigned long)cmd_rx_dropped,
+           (unsigned long)Serial_GetDropCount());
     return;
   }
 

@@ -10,7 +10,7 @@
 - TIM3 产生采样节拍，AD7606 #1 的 BUSY 下降沿触发两片 ADC 的串行读数。
 - 安富莱 DAC8563 模块提供 A/B 两路输出，电压范围为 0～10 V。
 - USB OTG FS 工作于 Host/CDC 模式，通过 CH340 接收 WT9011DCL-RF 的 0～3 号 IMU。
-- USART1 以 921600-8-N-1 输出 100 Hz、43 通道 VOFA+ JustFloat 数据，并接收文本命令。
+- USART1 以 921600-8-N-1 输出 100 Hz、43 通道 VOFA+ JustFloat 数据，并通过 Receive-to-IDLE DMA 接收文本命令。
 - SDIO 以 1-bit 模式写入 FAT16/FAT32 SD 卡；ADC 与原始 IMU 数据记录在同一 `LOGxxxx.BIN` 文件中。
 - PA15 按键切换记录状态；PA1 低电平点亮，表示正在记录。
 - 串口发送、命令解析和 SD 写入均与 2 kHz 采样解耦，使用 DMA/环形缓冲降低阻塞风险。
@@ -56,6 +56,8 @@ REC START        # 新建文件并开始记录
 REC STOP         # 排空缓冲、同步并关闭文件
 HELP             # 显示帮助
 ```
+
+USART1 RX 使用 DMA2 Stream2、256 字节 Receive-to-IDLE 缓冲和 512 字节软件环形队列，避免 2 kHz ADC 高优先级中断导致逐字节接收溢出。`HELP` 末尾会显示 `RX errors`、`RX dropped` 和 `TX dropped` 诊断计数。文本回复与 JustFloat 遥测共用 USART1 TX，PC 程序应能从连续二进制流中识别 ASCII 回复，或以遥测值变化确认命令执行结果。
 
 DAC 原始码映射为 `0x0000 = 0 V`、`0x8000 ≈ 5 V`、`0xFFFF = 10 V`。该映射要求安富莱模块的 J1、J2 均短接 **1–2（单极性 0～10 V）**。固件启动时会将两路输出初始化为 0 V；负电压命令会被限幅为 0 V，超过 10 V 的命令会被限幅为 10 V。
 

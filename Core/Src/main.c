@@ -114,8 +114,6 @@ static uint8_t  g_tx_frame[TX_FRAME_LEN];
 static const uint8_t g_tx_tail[4] = {0x00u, 0x00u, 0x80u, 0x7Fu};  /* JustFloat tail */
 static uint32_t g_next_uart_seq = 0u;
 
-static uint8_t  g_rx_byte;                        /* UART RX, one byte per IT  */
-
 static uint8_t cdc_rx_buf[CDC_RX_BUF_SIZE];
 static CDC_LineCodingTypeDef cdc_linecoding;
 static volatile CDC_AppStateTypeDef cdc_state = CDC_STATE_IDLE;
@@ -204,7 +202,7 @@ int main(void)
   printf("ch0: connection status (bit0=SD present, bit1=USB connected), ch1-2: DAC A/B volts\r\n");
   printf("Type HELP for commands.\r\n");
 
-  HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
+  Cmd_Init();
   HAL_TIM_Base_Start_IT(&htim3);
   /* USER CODE END 2 */
 
@@ -519,12 +517,11 @@ void IMU_RawFrameHook(uint8_t device_id, const uint8_t *payload, uint16_t len)
   }
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
   if (huart->Instance == USART1)
   {
-    Cmd_RxByte(g_rx_byte);
-    HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
+    Cmd_RxEvent(Size);
   }
 }
 
@@ -540,7 +537,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1)
   {
-    HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
+    Cmd_RxError();
   }
 }
 /* USER CODE END 4 */
