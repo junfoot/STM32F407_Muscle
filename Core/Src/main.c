@@ -176,9 +176,25 @@ int main(void)
   /* USER CODE BEGIN 2 */
   AD7606_Init();
   DAC8563_Init();
-  (void)Recorder_Init();
 
-  printf("\r\nSTM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 100 Hz\r\n",
+  /* Boot-time status, printed once at reset (the JustFloat stream keeps
+     reporting both live in channel 0). USB detection gets a bounded 2 s
+     enumeration window; TIM3 sampling is not started yet, nothing is lost. */
+  uint8_t boot_sd = Recorder_Init();
+  uint8_t boot_usb = 0u;
+  uint32_t usb_wait = HAL_GetTick();
+  while ((HAL_GetTick() - usb_wait) < 2000u)
+  {
+    MX_USB_HOST_Process();
+    if (Appli_state == APPLICATION_READY)
+    {
+      boot_usb = 1u;
+      break;
+    }
+  }
+
+  printf("\r\n[BOOT] SD=%u USB=%u (1=present)\r\n", (unsigned int)boot_sd, (unsigned int)boot_usb);
+  printf("STM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 100 Hz\r\n",
          (unsigned int)TX_CH_COUNT);
   printf("ch0: SD+USB status (bit0=SD logging, bit1=USB ready), ch1-2: DAC A/B volts\r\n");
   printf("Type HELP for commands.\r\n");
