@@ -184,7 +184,6 @@ static uint8_t rec_open_next_file(void)
   rec_sync_tick = HAL_GetTick();
   rec_active = 1u;
 
-  printf("[REC] logging to %s\r\n", rec_filename);
   return 1u;
 }
 
@@ -204,14 +203,14 @@ static void rec_close_file(void)
   (void)f_mount(NULL, "", 0u);
 }
 
-void Recorder_Init(void)
+uint8_t Recorder_Init(void)
 {
-  if (rec_open_next_file() == 0u)
+  uint8_t ok = rec_open_next_file();
+  if (ok == 0u)
   {
-    printf("[REC] no SD card (or mount failed), will retry every %u s\r\n",
-           (unsigned int)(REC_RETRY_PERIOD_MS / 1000u));
     rec_retry_tick = HAL_GetTick();
   }
+  return ok;
 }
 
 /**
@@ -288,7 +287,10 @@ void Recorder_Process(void)
     if ((HAL_GetTick() - rec_retry_tick) >= REC_RETRY_PERIOD_MS)
     {
       rec_retry_tick = HAL_GetTick();
-      (void)rec_open_next_file();
+      if (rec_open_next_file() != 0u)
+      {
+        printf("[REC] card detected, logging to %s\r\n", rec_filename);
+      }
     }
     return;
   }
@@ -312,7 +314,11 @@ void Recorder_Start(void)
     printf("[REC] already logging to %s\r\n", rec_filename);
     return;
   }
-  if (rec_open_next_file() == 0u)
+  if (rec_open_next_file() != 0u)
+  {
+    printf("[REC] logging to %s\r\n", rec_filename);
+  }
+  else
   {
     printf("[REC] start failed: no SD card or filesystem error\r\n");
   }

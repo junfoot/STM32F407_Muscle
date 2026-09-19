@@ -172,9 +172,25 @@ int main(void)
   /* USER CODE BEGIN 2 */
   AD7606_Init();
   DAC8563_Init();
-  Recorder_Init();
 
-  printf("\r\nSTM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 200 Hz\r\n",
+  /* Boot probe, reported as the very first serial output:
+     SD=1 -> card present and logging started;
+     USB=1 -> 9011RF receiver enumerated within a bounded 2 s window */
+  uint8_t boot_sd = Recorder_Init();
+  uint8_t boot_usb = 0u;
+  uint32_t usb_wait = HAL_GetTick();
+  while ((HAL_GetTick() - usb_wait) < 2000u)
+  {
+    MX_USB_HOST_Process();
+    if (Appli_state == APPLICATION_READY)
+    {
+      boot_usb = 1u;
+      break;
+    }
+  }
+
+  printf("\r\n[BOOT] SD=%u USB=%u\r\n", (unsigned int)boot_sd, (unsigned int)boot_usb);
+  printf("STM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 200 Hz\r\n",
          (unsigned int)TX_CH_COUNT);
   printf("Type HELP for commands.\r\n");
 

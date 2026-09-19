@@ -32,8 +32,14 @@ extern "C" {
 
 #include "main.h"
 
-void     Recorder_Init(void);
 void     Recorder_Process(void);
+
+/**
+  * @brief  Mount the card and start logging if present. Silent (no printf),
+  *         so the caller can print a boot status line first.
+  * @retval 1 = card present and logging started, 0 = no card / mount failed
+  */
+uint8_t  Recorder_Init(void);
 
 /* Producers, callable from ISR context */
 void     Recorder_PushAdc(uint32_t seq, const int16_t *ch16);
