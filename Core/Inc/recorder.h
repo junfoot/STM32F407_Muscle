@@ -48,6 +48,7 @@ void     Recorder_PushImu(uint32_t seq, uint8_t device_id, const uint8_t *payloa
 void     Recorder_Start(void);
 void     Recorder_Stop(void);
 uint8_t  Recorder_IsActive(void);
+uint8_t  Recorder_IsRequested(void);
 uint32_t Recorder_GetDropped(void);
 uint32_t Recorder_GetBytesWritten(void);
 

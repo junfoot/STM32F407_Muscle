@@ -42,6 +42,7 @@ static volatile uint32_t ring_head = 0u;   /* consumer index (main loop) */
 static volatile uint32_t ring_tail = 0u;   /* producer index (ISR)       */
 
 static uint8_t  rec_active = 0u;
+static volatile uint8_t rec_requested = 1u; /* read by sampling ISR producers */
 static uint32_t rec_dropped = 0u;
 static uint32_t rec_bytes_written = 0u;
 static uint32_t rec_sync_tick = 0u;
@@ -96,6 +97,11 @@ void Recorder_PushAdc(uint32_t seq, const int16_t *ch16)
 {
   uint8_t rec[REC_ADC_RECORD_LEN];
 
+  if (rec_requested == 0u)
+  {
+    return;
+  }
+
   rec[0] = REC_TYPE_ADC;
   rec[1] = (uint8_t)(seq & 0xFFu);
   rec[2] = (uint8_t)(seq >> 8);
@@ -109,6 +115,11 @@ void Recorder_PushAdc(uint32_t seq, const int16_t *ch16)
 void Recorder_PushImu(uint32_t seq, uint8_t device_id, const uint8_t *payload26)
 {
   uint8_t rec[REC_IMU_RECORD_LEN];
+
+  if (rec_requested == 0u)
+  {
+    return;
+  }
 
   rec[0] = REC_TYPE_IMU;
   rec[1] = (uint8_t)(seq & 0xFFu);
@@ -213,12 +224,17 @@ static void rec_close_file(void)
 {
   if (rec_active != 0u)
   {
-    (void)f_sync(&rec_file);
-    (void)f_close(&rec_file);
-    printf("[REC] %s closed, %lu bytes, %lu records dropped\r\n",
+    FRESULT sync_result;
+    FRESULT close_result;
+
+    sync_result = f_sync(&rec_file);
+    close_result = f_close(&rec_file);
+    printf("[REC] %s closed, %lu bytes, %lu records dropped, sync=%u close=%u\r\n",
            rec_filename,
            (unsigned long)rec_bytes_written,
-           (unsigned long)rec_dropped);
+           (unsigned long)rec_dropped,
+           (unsigned int)sync_result,
+           (unsigned int)close_result);
   }
   rec_active = 0u;
   rec_retry_tick = HAL_GetTick();
@@ -227,7 +243,10 @@ static void rec_close_file(void)
 
 uint8_t Recorder_Init(void)
 {
-  uint8_t ok = rec_open_next_file();
+  uint8_t ok;
+
+  rec_requested = 1u;
+  ok = rec_open_next_file();
   if (ok == 0u)
   {
     rec_retry_tick = HAL_GetTick();
@@ -306,7 +325,8 @@ void Recorder_Process(void)
 {
   if (rec_active == 0u)
   {
-    if ((HAL_GetTick() - rec_retry_tick) >= REC_RETRY_PERIOD_MS)
+    if ((rec_requested != 0u) &&
+        ((HAL_GetTick() - rec_retry_tick) >= REC_RETRY_PERIOD_MS))
     {
       rec_retry_tick = HAL_GetTick();
       if (rec_open_next_file() != 0u)
@@ -331,6 +351,7 @@ void Recorder_Process(void)
 
 void Recorder_Start(void)
 {
+  rec_requested = 1u;
   if (rec_active != 0u)
   {
     printf("[REC] already logging to %s\r\n", rec_filename);
@@ -348,8 +369,12 @@ void Recorder_Start(void)
 
 void Recorder_Stop(void)
 {
+  rec_requested = 0u;
   if (rec_active == 0u)
   {
+    __disable_irq();
+    ring_head = ring_tail;
+    __enable_irq();
     printf("[REC] not logging\r\n");
     return;
   }
@@ -364,6 +389,11 @@ void Recorder_Stop(void)
 uint8_t Recorder_IsActive(void)
 {
   return rec_active;
+}
+
+uint8_t Recorder_IsRequested(void)
+{
+  return rec_requested;
 }
 
 uint32_t Recorder_GetDropped(void)

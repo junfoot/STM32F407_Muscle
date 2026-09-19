@@ -61,17 +61,20 @@ void Cmd_RxByte(uint8_t byte)
 
 void Cmd_Process(void)
 {
+  char line[CMD_LINE_LEN];
+
   if (cmd_ready == 0u)
   {
     return;
   }
 
   __disable_irq();
+  memcpy(line, cmd_line, (size_t)cmd_len + 1u);
+  cmd_len = 0u;
   cmd_ready = 0u;
   __enable_irq();
 
-  cmd_handle(cmd_line);
-  cmd_len = 0u;
+  cmd_handle(line);
 }
 
 /**
@@ -188,8 +191,11 @@ static void cmd_handle(char *line)
   {
     if (fields < 2)
     {
-      printf("REC: %s, %lu bytes written, %lu records dropped\r\n",
+      printf("REC: %s, requested=%s, button=%s, led=%s, %lu bytes written, %lu records dropped\r\n",
              (Recorder_IsActive() != 0u) ? "logging" : "idle",
+             (Recorder_IsRequested() != 0u) ? "on" : "off",
+             (HAL_GPIO_ReadPin(REC_SW_GPIO_Port, REC_SW_Pin) == GPIO_PIN_RESET) ? "pressed" : "released",
+             (HAL_GPIO_ReadPin(REC_LED_GPIO_Port, REC_LED_Pin) == GPIO_PIN_RESET) ? "on" : "off",
              (unsigned long)Recorder_GetBytesWritten(),
              (unsigned long)Recorder_GetDropped());
     }
