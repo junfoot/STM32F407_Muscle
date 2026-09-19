@@ -4,8 +4,8 @@
   * @file    dac8563.h
   * @brief   Driver for the Armfly (安富莱) DAC8563 dual 16-bit DAC module
   *          (bit-banged SPI). The module analog stage maps the DAC code to
-  *          a +/-10 V output swing: 0x0000 -> -10 V, 0x8000 -> 0 V,
-  *          0xFFFF -> +10 V.
+  *          a 0..10 V output swing when J1/J2 are shorted at pins 1-2:
+  *          0x0000 -> 0 V, 0x8000 -> about 5 V, 0xFFFF -> 10 V.
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -22,7 +22,7 @@ extern "C" {
 #define DAC8563_CH_B     1u
 #define DAC8563_CH_BOTH  2u
 
-#define DAC8563_VMIN     (-10.0f)
+#define DAC8563_VMIN     (0.0f)
 #define DAC8563_VMAX     (10.0f)
 
 void DAC8563_Init(void);

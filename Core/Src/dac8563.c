@@ -8,8 +8,9 @@
   *          24-bit frame, MSB first: first byte is 0b00 + CMD[2:0] + ADDR[2:0],
   *          then 16 data bits. DIN is clocked in on the falling edge of SCLK.
   *          The internal 2.5 V reference is enabled; the module analog stage
-  *          maps the code to a +/-10 V output swing
-  *          (0x0000 -> -10 V, 0x8000 -> 0 V, 0xFFFF -> +10 V).
+  *          maps the code to a 0..10 V output swing when both output-range
+  *          jumpers J1/J2 are shorted at pins 1-2
+  *          (0x0000 -> 0 V, 0x8000 -> about 5 V, 0xFFFF -> 10 V).
   *          LDAC is held low so outputs update immediately.
   ******************************************************************************
   */
@@ -22,7 +23,7 @@
 #define DAC8563_CMD_REFERENCE      0x07u   /* internal reference setup            */
 #define DAC8563_SPI_DLY            8u      /* SCLK half period, ~50 ns            */
 
-#define DAC8563_ZERO_CODE          0x8000u /* 0 V on the +/-10 V module         */
+#define DAC8563_ZERO_CODE          0x0000u /* 0 V on the 0..10 V module          */
 
 /* Private function prototypes -----------------------------------------------*/
 static void dac8563_write24(uint8_t cmd_addr, uint16_t data);
@@ -81,7 +82,7 @@ void DAC8563_Init(void)
 }
 
 /**
-  * @brief  Set the DAC output code (0x0000 -> -10 V .. 0xFFFF -> +10 V).
+  * @brief  Set the DAC output code (0x0000 -> 0 V .. 0xFFFF -> 10 V).
   * @param  channel  DAC8563_CH_A, DAC8563_CH_B or DAC8563_CH_BOTH
   */
 void DAC8563_SetOutput(uint8_t channel, uint16_t value)
@@ -107,13 +108,13 @@ float DAC8563_GetVoltage(uint8_t channel)
   {
     return 0.0f;
   }
-  return (float)dac_last_code[channel] * (20.0f / 65535.0f) - 10.0f;
+  return (float)dac_last_code[channel] * (10.0f / 65535.0f);
 }
 
 /**
-  * @brief  Set the DAC output voltage, clamped to +/-10 V.
+  * @brief  Set the DAC output voltage, clamped to 0..10 V.
   * @param  channel  DAC8563_CH_A, DAC8563_CH_B or DAC8563_CH_BOTH
-  * @param  volts    Target voltage in V, -10.0 .. +10.0
+  * @param  volts    Target voltage in V, 0.0 .. 10.0
   */
 void DAC8563_SetVoltage(uint8_t channel, float volts)
 {

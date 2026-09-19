@@ -131,6 +131,7 @@ static void cmd_handle(char *line)
   {
     uint8_t ch;
     float   volts;
+    float   applied_volts;
     char   *end = NULL;
 
     if (fields < 3)
@@ -142,11 +143,14 @@ static void cmd_handle(char *line)
     volts = strtof(arg2, &end);
     if ((ch == 0xFFu) || (end == arg2) || (*end != '\0'))
     {
-      printf("ERR: usage DAC <A|B|AB> <volts>, volts in [-10, 10]\r\n");
+      printf("ERR: usage DAC <A|B|AB> <volts>, volts in [0, 10]\r\n");
       return;
     }
-    DAC8563_SetVoltage(ch, volts);
-    printf("OK: DAC %s -> %.3f V\r\n", arg1, (double)volts);
+    applied_volts = volts;
+    if (applied_volts > DAC8563_VMAX) { applied_volts = DAC8563_VMAX; }
+    if (applied_volts < DAC8563_VMIN) { applied_volts = DAC8563_VMIN; }
+    DAC8563_SetVoltage(ch, applied_volts);
+    printf("OK: DAC %s -> %.3f V\r\n", arg1, (double)applied_volts);
     return;
   }
 
@@ -191,8 +195,9 @@ static void cmd_handle(char *line)
   {
     if (fields < 2)
     {
-      printf("REC: %s, requested=%s, button=%s, led=%s, %lu bytes written, %lu records dropped\r\n",
+      printf("REC: %s, card=%s, requested=%s, button=%s, led=%s, %lu bytes written, %lu records dropped\r\n",
              (Recorder_IsActive() != 0u) ? "logging" : "idle",
+             (Recorder_IsCardPresent() != 0u) ? "present" : "absent",
              (Recorder_IsRequested() != 0u) ? "on" : "off",
              (HAL_GPIO_ReadPin(REC_SW_GPIO_Port, REC_SW_Pin) == GPIO_PIN_RESET) ? "pressed" : "released",
              (HAL_GPIO_ReadPin(REC_LED_GPIO_Port, REC_LED_Pin) == GPIO_PIN_RESET) ? "on" : "off",
@@ -217,7 +222,7 @@ static void cmd_handle(char *line)
   if (cmd_str_equal(verb, "HELP") || cmd_str_equal(verb, "?"))
   {
     printf("Commands (end with CR/LF):\r\n");
-    printf("  DAC <A|B|AB> <volts>   set DAC output voltage, -10..+10 V\r\n");
+    printf("  DAC <A|B|AB> <volts>   set DAC output voltage, 0..10 V\r\n");
     printf("  DACR <A|B|AB> <code>   set DAC raw code, 0..65535\r\n");
     printf("  IMU                    show IMU0..3 online state and data\r\n");
     printf("  REC [START|STOP]       SD recorder status / control\r\n");

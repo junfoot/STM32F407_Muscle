@@ -35,9 +35,9 @@ extern "C" {
 void     Recorder_Process(void);
 
 /**
-  * @brief  Mount the card and start logging if present. Silent (no printf),
+  * @brief  Probe the card without starting a recording. Silent (no printf),
   *         so the caller can print a boot status line first.
-  * @retval 1 = card present and logging started, 0 = no card / mount failed
+  * @retval 1 = SD card detected, 0 = no card detected
   */
 uint8_t  Recorder_Init(void);
 
@@ -49,6 +49,7 @@ void     Recorder_Start(void);
 void     Recorder_Stop(void);
 uint8_t  Recorder_IsActive(void);
 uint8_t  Recorder_IsRequested(void);
+uint8_t  Recorder_IsCardPresent(void);
 uint32_t Recorder_GetDropped(void);
 uint32_t Recorder_GetBytesWritten(void);
 

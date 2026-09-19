@@ -6,9 +6,9 @@
   *
   *          Commands (case-insensitive, terminated by CR or LF):
   *            DAC A 3.3      -> DAC channel A outputs +3.3 V
-  *            DAC B -2.5     -> DAC channel B outputs -2.5 V
+  *            DAC B 2.5      -> DAC channel B outputs +2.5 V
   *            DAC AB 0       -> both channels output 0 V
-  *            DACR A 49152   -> raw 16-bit code (0x0000=-10V .. 0xFFFF=+10V)
+  *            DACR A 49152   -> raw 16-bit code (0x0000=0V .. 0xFFFF=10V)
   *            IMU            -> print online state and latest data of IMU 0-3
   *            REC            -> SD recorder status
   *            REC START      -> start logging to a new LOGxxxx.BIN

@@ -10,7 +10,7 @@
   *    captured completely even while a FatFs write blocks the main loop.
   *  - 100 Hz of the stream goes to USART1 as a VOFA+ JustFloat frame,
   *    43 little-endian float32 followed by the tail 00 00 80 7F:
-  *      [0]    status: bit0 = SD card logging, bit1 = USB receiver ready
+  *      [0]    status: bit0 = SD card present, bit1 = USB device connected
   *             (0..3, updated live, hot-plug aware)
   *      [1..2] DAC A / DAC B output voltage (last commanded value)
   *      [3..18] 16 x ADC volts
@@ -178,8 +178,9 @@ int main(void)
   DAC8563_Init();
 
   /* Boot-time status, printed once at reset (the JustFloat stream keeps
-     reporting both live in channel 0). USB detection gets a bounded 2 s
-     enumeration window; TIM3 sampling is not started yet, nothing is lost. */
+     reporting both live in channel 0). Recorder_Init only probes the card;
+     it does not create a file or start recording. USB detection gets a
+     bounded 2 s enumeration window; TIM3 sampling is not started yet. */
   uint8_t boot_sd = Recorder_Init();
   uint8_t boot_usb = 0u;
   uint32_t usb_wait = HAL_GetTick();
@@ -192,11 +193,15 @@ int main(void)
       break;
     }
   }
+  if ((Appli_state == APPLICATION_START) || (Appli_state == APPLICATION_READY))
+  {
+    boot_usb = 1u;
+  }
 
   printf("\r\n[BOOT] SD=%u USB=%u (1=present)\r\n", (unsigned int)boot_sd, (unsigned int)boot_usb);
   printf("STM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 100 Hz\r\n",
          (unsigned int)TX_CH_COUNT);
-  printf("ch0: SD+USB status (bit0=SD logging, bit1=USB ready), ch1-2: DAC A/B volts\r\n");
+  printf("ch0: connection status (bit0=SD present, bit1=USB connected), ch1-2: DAC A/B volts\r\n");
   printf("Type HELP for commands.\r\n");
 
   HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
@@ -288,8 +293,9 @@ static void build_sample_frame(void)
   uint32_t idx = 0u;
 
   /* meta channels first: combined SD/USB status, then both DAC outputs */
-  g_tx_fdata[idx++] = (float)(((Appli_state == APPLICATION_READY) ? 2u : 0u) |
-                              ((Recorder_IsActive() != 0u) ? 1u : 0u));
+  g_tx_fdata[idx++] = (float)((((Appli_state == APPLICATION_START) ||
+                               (Appli_state == APPLICATION_READY)) ? 2u : 0u) |
+                              ((Recorder_IsCardPresent() != 0u) ? 1u : 0u));
   g_tx_fdata[idx++] = DAC8563_GetVoltage(DAC8563_CH_A);
   g_tx_fdata[idx++] = DAC8563_GetVoltage(DAC8563_CH_B);
 

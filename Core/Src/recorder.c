@@ -5,9 +5,9 @@
   * @brief   SD card recorder for EMG (AD7606) and IMU raw data.
   *          See recorder.h for the record format.
   *
-  *          Recording starts automatically at power-up when a card is
-  *          present; REC START / REC STOP / REC commands control it from the
-  *          serial console. A 48 KB ring decouples the 2000 Hz producers
+  *          Recording is idle after power-up and starts only after the REC
+  *          button is pressed or REC START is received. A 48 KB ring
+  *          decouples the 2000 Hz producers
   *          from blocking FatFs/SDIO writes. f_sync() runs every 2 s to
   *          bound data loss on sudden power-down.
   ******************************************************************************
@@ -26,6 +26,7 @@
 #define REC_WRITE_CHUNK      8192u
 #define REC_SYNC_PERIOD_MS   2000u
 #define REC_RETRY_PERIOD_MS  2000u
+#define REC_CARD_POLL_MS     1000u
 
 #define REC_TYPE_ADC         0xA1u
 #define REC_TYPE_IMU         0xB1u
@@ -42,16 +43,19 @@ static volatile uint32_t ring_head = 0u;   /* consumer index (main loop) */
 static volatile uint32_t ring_tail = 0u;   /* producer index (ISR)       */
 
 static uint8_t  rec_active = 0u;
-static volatile uint8_t rec_requested = 1u; /* read by sampling ISR producers */
+static volatile uint8_t rec_requested = 0u; /* read by sampling ISR producers */
+static uint8_t  rec_card_present = 0u;
 static uint32_t rec_dropped = 0u;
 static uint32_t rec_bytes_written = 0u;
 static uint32_t rec_sync_tick = 0u;
 static uint32_t rec_retry_tick = 0u;
+static uint32_t rec_card_poll_tick = 0u;
 static char     rec_filename[16];
 __align(4) static uint8_t rec_buf[REC_WRITE_CHUNK]; /* DMA requires word alignment */
 
 /* Private function prototypes -----------------------------------------------*/
 static void    ring_push(const uint8_t *data, uint32_t len);
+static uint8_t rec_probe_card(void);
 static uint8_t rec_open_next_file(void);
 static void    rec_close_file(void);
 static uint8_t rec_drain(uint8_t flush_all);
@@ -91,6 +95,30 @@ static void ring_push(const uint8_t *data, uint32_t len)
   ring_tail = (tail + len) % REC_RING_SIZE;
 
   __enable_irq();
+}
+
+/**
+  * @brief  Probe the SDIO card without creating or mounting a log file.
+  *         With no card-detect GPIO available, insertion/removal is inferred
+  *         from CMD13 or a bounded HAL_SD_Init() attempt.
+  */
+static uint8_t rec_probe_card(void)
+{
+  if (HAL_SD_GetCardState(&hsd) == HAL_SD_CARD_TRANSFER)
+  {
+    rec_card_present = 1u;
+    return 1u;
+  }
+
+  (void)HAL_SD_DeInit(&hsd);
+  if (HAL_SD_Init(&hsd) == HAL_OK)
+  {
+    rec_card_present = 1u;
+    return 1u;
+  }
+
+  rec_card_present = 0u;
+  return 0u;
 }
 
 void Recorder_PushAdc(uint32_t seq, const int16_t *ch16)
@@ -145,14 +173,10 @@ static uint8_t rec_open_next_file(void)
   /* MX_SDIO_SD_Init() performs the normal boot initialization. On a later
      insertion or after an I/O fault, reinitialize explicitly before asking
      FatFs to mount. disk_initialize() intentionally only checks readiness. */
-  if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER)
+  if (rec_probe_card() == 0u)
   {
-    (void)HAL_SD_DeInit(&hsd);
-    if (HAL_SD_Init(&hsd) != HAL_OK)
-    {
-      printf("[REC] SD init failed: ErrorCode=0x%08lX\r\n", hsd.ErrorCode);
-      return 0u;
-    }
+    printf("[REC] SD init failed: ErrorCode=0x%08lX\r\n", hsd.ErrorCode);
+    return 0u;
   }
 
   {
@@ -243,15 +267,26 @@ static void rec_close_file(void)
 
 uint8_t Recorder_Init(void)
 {
-  uint8_t ok;
+  FRESULT fr;
 
-  rec_requested = 1u;
-  ok = rec_open_next_file();
-  if (ok == 0u)
+  /* Power-up must never create a log file. Only verify that the card and its
+     filesystem are usable, then unmount it until recording is requested. */
+  rec_requested = 0u;
+  rec_active = 0u;
+  ring_head = 0u;
+  ring_tail = 0u;
+
+  rec_card_present = rec_probe_card();
+  if (rec_card_present != 0u)
   {
-    rec_retry_tick = HAL_GetTick();
+    /* Check the filesystem once, but presence only requires SDIO init. */
+    fr = f_mount(&rec_fs, "", 1u);
+    (void)f_mount(NULL, "", 0u);
+    (void)fr;
   }
-  return ok;
+  rec_retry_tick = HAL_GetTick();
+  rec_card_poll_tick = rec_retry_tick;
+  return rec_card_present;
 }
 
 /**
@@ -308,6 +343,7 @@ static uint8_t rec_drain(uint8_t flush_all)
     if ((f_write(&rec_file, buf, chunk, &bw) != FR_OK) || (bw != chunk))
     {
       printf("[REC] write error, card removed or full\r\n");
+      rec_card_present = (HAL_SD_GetCardState(&hsd) == HAL_SD_CARD_TRANSFER) ? 1u : 0u;
       rec_close_file();
       return 0u;
     }
@@ -334,7 +370,19 @@ void Recorder_Process(void)
         printf("[REC] card detected, logging to %s\r\n", rec_filename);
       }
     }
+    else if ((rec_requested == 0u) &&
+             ((HAL_GetTick() - rec_card_poll_tick) >= REC_CARD_POLL_MS))
+    {
+      rec_card_poll_tick = HAL_GetTick();
+      (void)rec_probe_card();
+    }
     return;
+  }
+
+  if ((HAL_GetTick() - rec_card_poll_tick) >= REC_CARD_POLL_MS)
+  {
+    rec_card_poll_tick = HAL_GetTick();
+    rec_card_present = (HAL_SD_GetCardState(&hsd) == HAL_SD_CARD_TRANSFER) ? 1u : 0u;
   }
 
   if (rec_drain(0u) == 0u)
@@ -394,6 +442,11 @@ uint8_t Recorder_IsActive(void)
 uint8_t Recorder_IsRequested(void)
 {
   return rec_requested;
+}
+
+uint8_t Recorder_IsCardPresent(void)
+{
+  return rec_card_present;
 }
 
 uint32_t Recorder_GetDropped(void)
