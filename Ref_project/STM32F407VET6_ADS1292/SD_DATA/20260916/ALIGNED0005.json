@@ -1,0 +1,35 @@
+{
+  "emg_source": "EMG0005.BIN",
+  "imu_source": "IMU0005.BIN",
+  "start_tick_ms": 3430,
+  "emg_sample_rate_hz": 2000,
+  "device_ids": [
+    0,
+    1,
+    2
+  ],
+  "record_count": 42459,
+  "overlap_start_s": 1.022,
+  "overlap_end_s": 22.250999999999998,
+  "overlap_duration_s": 21.229,
+  "emg_time_basis": "sequence/sample_rate",
+  "emg_sequence_continuous": true,
+  "warnings": [],
+  "imu_alignment": "per-device linear interpolation onto the EMG timeline",
+  "angle_interpolation": "shortest path across the +/-180 degree boundary",
+  "outside_common_range": "omitted",
+  "nearest_imu_source_offset_ms": {
+    "0": {
+      "max": 342.49999999999983,
+      "mean": 17.12340139899668
+    },
+    "1": {
+      "max": 67.99999999999784,
+      "mean": 3.654007395369652
+    },
+    "2": {
+      "max": 20.999999999997243,
+      "mean": 2.222555877434703
+    }
+  }
+}
