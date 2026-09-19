@@ -75,7 +75,9 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : REC_SW_Pin (on-board button S2 to GND, V2.8 schematic) */
+  /*Configure GPIO pin : REC_SW_Pin (on-board button K3 to GND, V2.8 schematic;
+     PA15/JTDI is a plain GPIO on F4 once configured as input, SWD debug is
+     unaffected since it only uses PA13/PA14) */
   GPIO_InitStruct.Pin = REC_SW_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;

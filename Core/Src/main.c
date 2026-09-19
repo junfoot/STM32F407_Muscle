@@ -18,7 +18,7 @@
   *    (USB Host CDC, CH340 @ 460800), parsed by imu_parser.
   *  - USART1 RX takes line-based string commands (see cmd.h), e.g.
   *    "DAC A 3.3" sets DAC channel A to +3.3 V, "REC STOP" stops logging.
-  *  - On-board button S2 (PA4, to GND) toggles SD recording start/stop;
+  *  - On-board button K3 (PA15, to GND) toggles SD recording start/stop;
   *    the PA1 LED (active low) is on while recording. See 原理图V2.8.
   *  - printf() is retargeted to USART1 through a non-blocking DMA ring
   *    buffer (serial.c), so logging never stalls the 2000 Hz loop.
@@ -404,7 +404,7 @@ void USBH_CDC_ReceiveCallback(USBH_HandleTypeDef *phost)
 }
 
 /**
-  * @brief  Poll the on-board REC button S2 (PA4, active low, 100 nF to VCC
+  * @brief  Poll the on-board REC button K3 (PA15, active low, 100 nF to GND
   *         on the board). Sampled every 20 ms, 3 identical samples required
   *         (60 ms debounce); a stable press toggles SD recording.
   */

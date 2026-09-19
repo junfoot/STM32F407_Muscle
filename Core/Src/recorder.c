@@ -137,14 +137,24 @@ static uint8_t rec_open_next_file(void)
 
   for (n = 0u; n < 10000u; n++)
   {
+    FRESULT fr;
+
     (void)snprintf(rec_filename, sizeof(rec_filename), "LOG%04lu.BIN", (unsigned long)n);
-    if (f_open(&rec_file, rec_filename, FA_CREATE_NEW | FA_WRITE) == FR_OK)
+    fr = f_open(&rec_file, rec_filename, FA_CREATE_NEW | FA_WRITE);
+    if (fr == FR_OK)
     {
       break;
+    }
+    if (fr != FR_EXIST)
+    {
+      /* real I/O error (card removed mid-scan, full, ...): give up now */
+      (void)f_mount(NULL, "", 0u);
+      return 0u;
     }
   }
   if (n == 10000u)
   {
+    (void)f_mount(NULL, "", 0u);
     return 0u;
   }
 
