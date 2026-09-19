@@ -18,6 +18,8 @@
   *    (USB Host CDC, CH340 @ 460800), parsed by imu_parser.
   *  - USART1 RX takes line-based string commands (see cmd.h), e.g.
   *    "DAC A 3.3" sets DAC channel A to +3.3 V, "REC STOP" stops logging.
+  *  - On-board button S2 (PA4, to GND) toggles SD recording start/stop;
+  *    the PA1 LED (active low) is on while recording. See 原理图V2.8.
   *  - printf() is retargeted to USART1 through a non-blocking DMA ring
   *    buffer (serial.c), so logging never stalls the 2000 Hz loop.
   *
@@ -125,6 +127,7 @@ void SystemClock_Config(void);
 static void CDC_Process(void);
 static USBH_StatusTypeDef CDC_SetControlLineState(USBH_HandleTypeDef *phost, uint16_t state);
 static void build_sample_frame(void);
+static void rec_switch_poll(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -197,6 +200,10 @@ int main(void)
     }
 
     Cmd_Process();
+
+    rec_switch_poll();
+    HAL_GPIO_WritePin(REC_LED_GPIO_Port, REC_LED_Pin,
+                      (Recorder_IsActive() != 0u) ? GPIO_PIN_RESET : GPIO_PIN_SET);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -393,6 +400,47 @@ void USBH_CDC_ReceiveCallback(USBH_HandleTypeDef *phost)
   {
     cdc_state = CDC_STATE_START_RECEPTION;
     cdc_rx_ready = 0U;
+  }
+}
+
+/**
+  * @brief  Poll the on-board REC button S2 (PA4, active low, 100 nF to VCC
+  *         on the board). Sampled every 20 ms, 3 identical samples required
+  *         (60 ms debounce); a stable press toggles SD recording.
+  */
+static void rec_switch_poll(void)
+{
+  static uint32_t last_tick = 0u;
+  static uint8_t  raw_history = 0xFFu;   /* bit0 = latest sample, 1 = released */
+  static uint8_t  stable_state = 1u;     /* debounced state, 1 = released    */
+
+  if ((HAL_GetTick() - last_tick) < 20u)
+  {
+    return;
+  }
+  last_tick = HAL_GetTick();
+
+  raw_history = (uint8_t)((raw_history << 1) |
+      ((HAL_GPIO_ReadPin(REC_SW_GPIO_Port, REC_SW_Pin) != GPIO_PIN_RESET) ? 1u : 0u));
+
+  if ((raw_history & 0x07u) == 0x00u)
+  {
+    if (stable_state != 0u)
+    {
+      stable_state = 0u;   /* debounced press edge: toggle recording */
+      if (Recorder_IsActive() != 0u)
+      {
+        Recorder_Stop();
+      }
+      else
+      {
+        Recorder_Start();
+      }
+    }
+  }
+  else if ((raw_history & 0x07u) == 0x07u)
+  {
+    stable_state = 1u;
   }
 }
 

@@ -51,7 +51,7 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, DAC_SYNC_Pin|DAC_CLR_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, DAC_SYNC_Pin|DAC_CLR_Pin|REC_LED_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, DAC_DIN_Pin|DAC_LDAC_Pin|DAC_SCLK_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
@@ -67,12 +67,19 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOD, AD2_OS0_Pin|AD2_SCK_Pin|AD2_RST_Pin|AD2_RANGE_Pin
                           |AD2_OS2_Pin|AD2_OS1_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DAC_SYNC_Pin DAC_DIN_Pin DAC_LDAC_Pin DAC_CLR_Pin DAC_SCLK_Pin */
-  GPIO_InitStruct.Pin = DAC_SYNC_Pin|DAC_DIN_Pin|DAC_LDAC_Pin|DAC_CLR_Pin|DAC_SCLK_Pin;
+  /*Configure GPIO pins : DAC_SYNC_Pin DAC_DIN_Pin DAC_LDAC_Pin DAC_CLR_Pin DAC_SCLK_Pin REC_LED_Pin */
+  GPIO_InitStruct.Pin = DAC_SYNC_Pin|DAC_DIN_Pin|DAC_LDAC_Pin|DAC_CLR_Pin|DAC_SCLK_Pin
+                        |REC_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : REC_SW_Pin (on-board button S2 to GND, V2.8 schematic) */
+  GPIO_InitStruct.Pin = REC_SW_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(REC_SW_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : AD1_BUSY_Pin */
   GPIO_InitStruct.Pin = AD1_BUSY_Pin;

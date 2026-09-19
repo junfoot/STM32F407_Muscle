@@ -57,10 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define DAC_DIN_Pin GPIO_PIN_0
+#define DAC_DIN_GPIO_Port GPIOA
+#define REC_LED_Pin GPIO_PIN_1
+#define REC_LED_GPIO_Port GPIOA
 #define DAC_SYNC_Pin GPIO_PIN_2
 #define DAC_SYNC_GPIO_Port GPIOA
-#define DAC_DIN_Pin GPIO_PIN_4
-#define DAC_DIN_GPIO_Port GPIOA
+#define REC_SW_Pin GPIO_PIN_4
+#define REC_SW_GPIO_Port GPIOA
 #define DAC_LDAC_Pin GPIO_PIN_5
 #define DAC_LDAC_GPIO_Port GPIOA
 #define DAC_CLR_Pin GPIO_PIN_6
