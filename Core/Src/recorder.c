@@ -24,7 +24,7 @@
 #define REC_RING_SIZE        (48u * 1024u)
 #define REC_WRITE_CHUNK      8192u
 #define REC_SYNC_PERIOD_MS   2000u
-#define REC_RETRY_PERIOD_MS  5000u
+#define REC_RETRY_PERIOD_MS  2000u
 
 #define REC_TYPE_ADC         0xA1u
 #define REC_TYPE_IMU         0xB1u

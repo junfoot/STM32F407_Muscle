@@ -29,6 +29,12 @@ void DAC8563_Init(void);
 void DAC8563_SetOutput(uint8_t channel, uint16_t value);
 void DAC8563_SetVoltage(uint8_t channel, float volts);
 
+/**
+  * @brief  Last commanded output voltage of a channel (for telemetry).
+  * @param  channel  DAC8563_CH_A or DAC8563_CH_B
+  */
+float DAC8563_GetVoltage(uint8_t channel);
+
 #ifdef __cplusplus
 }
 #endif

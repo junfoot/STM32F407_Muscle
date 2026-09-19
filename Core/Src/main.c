@@ -8,10 +8,13 @@
   *    the BUSY falling edge (EXTI0) reads all 16 channels right in the ISR
   *    and pushes the raw frame into the SD recorder ring, so samples are
   *    captured completely even while a FatFs write blocks the main loop.
-  *  - 200 Hz of the stream goes to USART1 as a VOFA+ JustFloat frame:
-  *    40 little-endian float32 (16 x ADC volts + 4 IMU x [roll,pitch,yaw,
-  *    ax,ay,az]) followed by the tail 00 00 80 7F. IMU values are held
-  *    between IMU updates (the wireless IMUs upload much slower).
+  *  - 100 Hz of the stream goes to USART1 as a VOFA+ JustFloat frame,
+  *    43 little-endian float32 followed by the tail 00 00 80 7F:
+  *      [0]    status: bit0 = SD card logging, bit1 = USB receiver ready
+  *             (0..3, updated live, hot-plug aware)
+  *      [1..2] DAC A / DAC B output voltage (last commanded value)
+  *      [3..18] 16 x ADC volts
+  *      [19..42] 4 IMU x [roll,pitch,yaw,ax,ay,az] (held between updates)
   *  - Every ADC sample and every raw IMU frame is also logged to the SD
   *    card (recorder.c, LOGxxxx.BIN) with a common 2000 Hz sequence number.
   *  - IMU data comes from the WT9011DCL-RF receiver attached to USB OTG FS
@@ -78,9 +81,10 @@ typedef enum
 /* USER CODE BEGIN PD */
 #define IMU_COUNT                    4u      /* slaves with device_id 0..3        */
 #define IMU_FLOATS_PER_UNIT          6u      /* roll,pitch,yaw + ax,ay,az         */
-#define TX_CH_COUNT                  (AD7606_TOTAL_CH + IMU_COUNT * IMU_FLOATS_PER_UNIT)
+#define TX_META_FLOATS               3u      /* status + DAC A + DAC B (first)    */
+#define TX_CH_COUNT                  (TX_META_FLOATS + AD7606_TOTAL_CH + IMU_COUNT * IMU_FLOATS_PER_UNIT)
 #define TX_FRAME_LEN                 (TX_CH_COUNT * 4u + 4u)   /* floats + tail  */
-#define TX_DECIMATION                10u     /* 2000 Hz / 10 = 200 Hz on UART  */
+#define TX_DECIMATION                20u     /* 2000 Hz / 20 = 100 Hz on UART  */
 #define ADC_LSB_VOLTS                (5.0f / 32768.0f)         /* +/-5 V range   */
 
 #define CDC_RX_BUF_SIZE              512U
@@ -172,26 +176,11 @@ int main(void)
   /* USER CODE BEGIN 2 */
   AD7606_Init();
   DAC8563_Init();
+  (void)Recorder_Init();
 
-  /* Boot probe, reported as the very first serial output:
-     SD=1 -> card present and logging started;
-     USB=1 -> 9011RF receiver enumerated within a bounded 2 s window */
-  uint8_t boot_sd = Recorder_Init();
-  uint8_t boot_usb = 0u;
-  uint32_t usb_wait = HAL_GetTick();
-  while ((HAL_GetTick() - usb_wait) < 2000u)
-  {
-    MX_USB_HOST_Process();
-    if (Appli_state == APPLICATION_READY)
-    {
-      boot_usb = 1u;
-      break;
-    }
-  }
-
-  printf("\r\n[BOOT] SD=%u USB=%u\r\n", (unsigned int)boot_sd, (unsigned int)boot_usb);
-  printf("STM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 200 Hz\r\n",
+  printf("\r\nSTM32F407_Muscle ready. USART1 @ 921600 8N1, JustFloat %u ch @ 100 Hz\r\n",
          (unsigned int)TX_CH_COUNT);
+  printf("ch0: SD+USB status (bit0=SD logging, bit1=USB ready), ch1-2: DAC A/B volts\r\n");
   printf("Type HELP for commands.\r\n");
 
   HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1u);
@@ -281,6 +270,12 @@ void SystemClock_Config(void)
 static void build_sample_frame(void)
 {
   uint32_t idx = 0u;
+
+  /* meta channels first: combined SD/USB status, then both DAC outputs */
+  g_tx_fdata[idx++] = (float)(((Appli_state == APPLICATION_READY) ? 2u : 0u) |
+                              ((Recorder_IsActive() != 0u) ? 1u : 0u));
+  g_tx_fdata[idx++] = DAC8563_GetVoltage(DAC8563_CH_A);
+  g_tx_fdata[idx++] = DAC8563_GetVoltage(DAC8563_CH_B);
 
   /* latest ADC sample is written by the EXTI ISR; copy it atomically */
   __disable_irq();

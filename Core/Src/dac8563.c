@@ -27,6 +27,9 @@
 /* Private function prototypes -----------------------------------------------*/
 static void dac8563_write24(uint8_t cmd_addr, uint16_t data);
 
+/* Private variables ---------------------------------------------------------*/
+static uint16_t dac_last_code[2] = {DAC8563_ZERO_CODE, DAC8563_ZERO_CODE};
+
 /**
   * @brief  Send one 24-bit word. cmd_addr = (CMD << 3) | ADDR.
   */
@@ -86,11 +89,25 @@ void DAC8563_SetOutput(uint8_t channel, uint16_t value)
   if ((channel == DAC8563_CH_A) || (channel == DAC8563_CH_BOTH))
   {
     dac8563_write24((uint8_t)((DAC8563_CMD_WRITE_UPDATE << 3) | DAC8563_CH_A), value);
+    dac_last_code[DAC8563_CH_A] = value;
   }
   if ((channel == DAC8563_CH_B) || (channel == DAC8563_CH_BOTH))
   {
     dac8563_write24((uint8_t)((DAC8563_CMD_WRITE_UPDATE << 3) | DAC8563_CH_B), value);
+    dac_last_code[DAC8563_CH_B] = value;
   }
+}
+
+/**
+  * @brief  Last commanded output voltage of a channel (for telemetry).
+  */
+float DAC8563_GetVoltage(uint8_t channel)
+{
+  if (channel > DAC8563_CH_B)
+  {
+    return 0.0f;
+  }
+  return (float)dac_last_code[channel] * (20.0f / 65535.0f) - 10.0f;
 }
 
 /**
