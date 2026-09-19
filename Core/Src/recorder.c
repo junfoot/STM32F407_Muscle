@@ -16,6 +16,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "recorder.h"
 #include "ff.h"
+#include "sdio.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -46,7 +47,7 @@ static uint32_t rec_bytes_written = 0u;
 static uint32_t rec_sync_tick = 0u;
 static uint32_t rec_retry_tick = 0u;
 static char     rec_filename[16];
-static uint8_t  rec_buf[REC_WRITE_CHUNK];   /* static: 8 KB must not sit on the stack */
+__align(4) static uint8_t rec_buf[REC_WRITE_CHUNK]; /* DMA requires word alignment */
 
 /* Private function prototypes -----------------------------------------------*/
 static void    ring_push(const uint8_t *data, uint32_t len);
@@ -130,9 +131,30 @@ static uint8_t rec_open_next_file(void)
   uint32_t n;
   UINT     bw;
 
-  if (f_mount(&rec_fs, "", 1u) != FR_OK)
+  /* MX_SDIO_SD_Init() performs the normal boot initialization. On a later
+     insertion or after an I/O fault, reinitialize explicitly before asking
+     FatFs to mount. disk_initialize() intentionally only checks readiness. */
+  if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER)
   {
-    return 0u;
+    (void)HAL_SD_DeInit(&hsd);
+    if (HAL_SD_Init(&hsd) != HAL_OK)
+    {
+      printf("[REC] SD init failed: ErrorCode=0x%08lX\r\n", hsd.ErrorCode);
+      return 0u;
+    }
+  }
+
+  {
+    FRESULT fr = f_mount(&rec_fs, "", 1u);
+    if (fr != FR_OK)
+    {
+      /* FRESULT tells the layer, hsd.ErrorCode tells the cause:
+         FR_NOT_READY(3) + ErrorCode 0x04 = card never answered CMD (wiring/
+         contact/power); FR_NO_FILESYSTEM(13) = card OK but not FAT-formatted. */
+      printf("[REC] mount failed: FRESULT=%u SD_ErrorCode=0x%08lX\r\n",
+             (unsigned int)fr, hsd.ErrorCode);
+      return 0u;
+    }
   }
 
   for (n = 0u; n < 10000u; n++)

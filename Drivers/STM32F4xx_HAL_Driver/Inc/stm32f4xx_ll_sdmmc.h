@@ -305,7 +305,7 @@ typedef struct
 #endif /* SDMMC_DATATIMEOUT */
 
 #ifndef SDMMC_SWDATATIMEOUT /*Software Data Timeout (ms) */
-#define SDMMC_SWDATATIMEOUT                SDMMC_DATATIMEOUT
+#define SDMMC_SWDATATIMEOUT                500U   /* must stay finite: with a stalled data phase (bad/absent-card contact) the SD_FindSCR / SD_PowerON polling loops would otherwise block the whole system forever */
 #endif /* SDMMC_SWDATATIMEOUT */
 
 #define SDMMC_0TO7BITS                                0x000000FFU

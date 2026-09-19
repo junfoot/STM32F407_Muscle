@@ -23,6 +23,8 @@ extern "C" {
 /* USER CODE END Includes */
 
 extern SD_HandleTypeDef hsd;
+extern DMA_HandleTypeDef hdma_sdio_rx;
+extern DMA_HandleTypeDef hdma_sdio_tx;
 
 /* USER CODE BEGIN Private defines */
 

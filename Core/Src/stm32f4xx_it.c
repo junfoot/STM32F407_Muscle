@@ -57,6 +57,9 @@
 /* External variables --------------------------------------------------------*/
 extern TIM_HandleTypeDef htim3;
 extern DMA_HandleTypeDef hdma_usart1_tx;
+extern DMA_HandleTypeDef hdma_sdio_rx;
+extern DMA_HandleTypeDef hdma_sdio_tx;
+extern SD_HandleTypeDef hsd;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
 extern HCD_HandleTypeDef hhcd_USB_OTG_FS;
@@ -254,6 +257,21 @@ void DMA2_Stream7_IRQHandler(void)
   /* USER CODE BEGIN DMA2_Stream7_IRQn 1 */
 
   /* USER CODE END DMA2_Stream7_IRQn 1 */
+}
+
+void DMA2_Stream3_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_sdio_rx);
+}
+
+void DMA2_Stream6_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_sdio_tx);
+}
+
+void SDIO_IRQHandler(void)
+{
+  HAL_SD_IRQHandler(&hsd);
 }
 
 /**
