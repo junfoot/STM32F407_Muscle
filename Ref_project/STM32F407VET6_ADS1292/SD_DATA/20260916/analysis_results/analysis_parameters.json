@@ -1,8 +1,0 @@
-{
-  "emg_sample_rate_hz": 2000.0,
-  "motion_analysis_rate_hz": 200.0,
-  "emg_envelope": "100 ms moving RMS",
-  "motion_segmentation": "median of rotation-invariant gyro/dynamic-acc norms; robust scaling; threshold 0.24",
-  "stride_frequency": "PCA gyro principal component, 0.45-2.2 Hz bandpass, Welch peak 0.55-1.8 Hz",
-  "caveat": "Descriptive single-recording analysis; no MVC or anatomical-frame calibration."
-}
