@@ -7,8 +7,11 @@
   *          Both chips share the CONVST pulse so all 16 channels are
   *          converted at the same instant. Data is shifted out through the
   *          single DOUTA (DB7) line of each chip: 8 channels x 16 bits,
-  *          MSB first, 128 SCLK cycles per chip. RANGE = 0 (+/-5 V),
-  *          OS[2:0] = 000 (no oversampling, conversion time < 5 us).
+ *          MSB first, 128 SCLK cycles per chip. The AD7606 shifts the next
+ *          bit out on the SCLK rising edge and the data is valid on the
+ *          falling edge, so SCLK idles high and each bit is sampled after a
+ *          falling edge. RANGE = 0 (+/-5 V), OS[2:0] = 000 (no oversampling,
+ *          conversion time < 5 us).
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -65,9 +68,10 @@ void AD7606_StartConversion(void)
 }
 
 /**
-  * @brief  Shift out 8 channels x 16 bits from one chip, MSB first.
-  *         Data changes on the SCLK rising edge and is sampled while SCLK
-  *         is high. Must be called after BUSY has fallen.
+ * @brief  Shift out 8 channels x 16 bits from one chip, MSB first.
+ *         The MSB is presented when CS falls; subsequent bits are shifted
+ *         on SCLK rising edges and sampled on SCLK falling edges. Must be
+ *         called after BUSY has fallen.
   */
 static void ad7606_read_chip(GPIO_TypeDef *cs_port, uint16_t cs_pin,
                              GPIO_TypeDef *sck_port, uint16_t sck_pin,
@@ -77,7 +81,11 @@ static void ad7606_read_chip(GPIO_TypeDef *cs_port, uint16_t cs_pin,
   uint32_t sck_set = (uint32_t)sck_pin;
   uint32_t sck_rst = (uint32_t)sck_pin << 16u;
 
-  cs_port->BSRR = (uint32_t)cs_pin << 16u;          /* CS low: frames the readout */
+  /* AD7606 serial timing uses an active-high idle clock.  CS falling makes
+     the MSB available, then the first falling SCLK edge samples that MSB. */
+  sck_port->BSRR = sck_set;
+  ad7606_delay(AD_SPI_DLY);
+  cs_port->BSRR = (uint32_t)cs_pin << 16u;          /* CS low: frame the readout */
   ad7606_delay(AD_SPI_DLY);
 
   for (uint32_t ch = 0u; ch < AD7606_CH_PER_CHIP; ch++)
@@ -85,10 +93,10 @@ static void ad7606_read_chip(GPIO_TypeDef *cs_port, uint16_t cs_pin,
     uint16_t value = 0u;
     for (uint32_t bit = 0u; bit < 16u; bit++)
     {
-      sck_port->BSRR = sck_set;                     /* rising edge: next bit out */
+      sck_port->BSRR = sck_rst;                     /* falling edge: sample bit */
       ad7606_delay(AD_SPI_DLY);
       value = (uint16_t)((value << 1) | ((dout_port->IDR & dout_pin) != 0u ? 1u : 0u));
-      sck_port->BSRR = sck_rst;
+      sck_port->BSRR = sck_set;                     /* rising edge: shift next bit */
       ad7606_delay(AD_SPI_DLY);
     }
     out[ch] = (int16_t)value;
