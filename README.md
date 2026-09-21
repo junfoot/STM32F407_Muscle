@@ -10,7 +10,7 @@
 - TIM3 产生采样节拍，AD7606 #1 的 BUSY 下降沿触发两片 ADC 的串行读数。
 - 安富莱 DAC8563 模块提供 A/B 两路输出，电压范围为 0～10 V。
 - USB OTG FS 工作于 Host/CDC 模式，通过 CH340 接收 WT9011DCL-RF 的 0～3 号 IMU。
-- USART1 以 921600-8-N-1 输出 100 Hz、43 通道 VOFA+ JustFloat 数据，并通过 Receive-to-IDLE DMA 接收文本命令。
+- USART1 以 921600-8-N-1 输出 100 Hz、59 通道 VOFA+ JustFloat 数据，并通过 Receive-to-IDLE DMA 接收文本命令；16 路原始 ADC 后追加 16 路实时 sEMG 滤波值。
 - SDIO 以 1-bit 模式写入 FAT16/FAT32 SD 卡；ADC 与原始 IMU 数据记录在同一 `LOGxxxx.BIN` 文件中。
 - PA15 按键切换记录状态；PA1 低电平点亮，表示正在记录。
 - 串口发送、命令解析和 SD 写入均与 2 kHz 采样解耦，使用 DMA/环形缓冲降低阻塞风险。
@@ -19,7 +19,8 @@
 
 ```text
 TIM3 2 kHz ──> 两片 AD7606 同步转换 ──> BUSY/EXTI ──> 16 通道原始值
-                                                        ├─> SD 环形缓冲 ──> LOGxxxx.BIN
+                                                        ├─> SD 环形缓冲 ──> LOGxxxx.BIN（原始值不变）
+                                                        ├─> 20 Hz 高通 + 50 Hz 陷波 + 450 Hz 低通 ──> 16 路滤波值
                                                         └─> 20 倍抽取 ──> USART1 100 Hz
 
 9011RF 接收器 ──USB Host/CDC──> IMU 解析器 ──────────────┬─> SD 环形缓冲
@@ -28,16 +29,17 @@ TIM3 2 kHz ──> 两片 AD7606 同步转换 ──> BUSY/EXTI ──> 16 通�
 
 ## 串口遥测格式
 
-每帧包含 43 个小端 `float32`，末尾追加 `00 00 80 7F`：
+每帧包含 59 个小端 `float32`，末尾追加 `00 00 80 7F`：
 
 | 索引 | 内容 |
 |---|---|
 | 0 | 连接状态位：bit0=已检测到 SD 卡，bit1=已连接 USB 设备 |
 | 1～2 | DAC A、DAC B 最近一次设定的电压（V） |
-| 3～18 | AD7606 的 16 路电压（V） |
-| 19～42 | IMU 0～3，每个依次为 Roll、Pitch、Yaw（°）和 ax、ay、az（g） |
+| 3～18 | AD7606 的 16 路原始电压（V） |
+| 19～34 | 16 路实时滤波 sEMG 电压（V）：20 Hz 二阶 Butterworth 高通、50 Hz 陷波（Q=30）、450 Hz 二阶 Butterworth 低通 |
+| 35～58 | IMU 0～3，每个依次为 Roll、Pitch、Yaw（°）和 ax、ay、az（g） |
 
-IMU 两次更新之间保持上一帧数值。完整帧长度为 `43 × 4 + 4 = 176` 字节，可直接使用 VOFA+ 的 JustFloat 协议查看。
+IMU 两次更新之间保持上一帧数值。完整帧长度为 `59 × 4 + 4 = 240` 字节，可直接使用 VOFA+ 的 JustFloat 协议查看。SD 卡仍只写入原来的 `int16 adc[16]` 原始记录。
 
 状态值为 0～3：`0`=均未连接，`1`=仅 SD，`2`=仅 USB，`3`=SD 与 USB 均已连接。SD 没有独立的卡检测引脚，固件空闲时每秒通过 SDIO 探测一次，因此热插拔状态最多约有 1 秒延迟；该状态与“是否正在记录”无关，记录状态仍由 PA1 LED 和 `REC` 命令显示。
 

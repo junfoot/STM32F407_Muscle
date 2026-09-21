@@ -9,12 +9,13 @@
   *    and pushes the raw frame into the SD recorder ring, so samples are
   *    captured completely even while a FatFs write blocks the main loop.
   *  - 100 Hz of the stream goes to USART1 as a VOFA+ JustFloat frame,
-  *    43 little-endian float32 followed by the tail 00 00 80 7F:
+  *    59 little-endian float32 followed by the tail 00 00 80 7F:
   *      [0]    status: bit0 = SD card present, bit1 = USB device connected
   *             (0..3, updated live, hot-plug aware)
   *      [1..2] DAC A / DAC B output voltage (last commanded value)
-  *      [3..18] 16 x ADC volts
-  *      [19..42] 4 IMU x [roll,pitch,yaw,ax,ay,az] (held between updates)
+  *      [3..18] 16 x raw ADC volts
+  *      [19..34] 16 x filtered sEMG volts (20 Hz HP, 50 Hz notch, 450 Hz LP)
+  *      [35..58] 4 IMU x [roll,pitch,yaw,ax,ay,az] (held between updates)
   *  - Every ADC sample and every raw IMU frame is also logged to the SD
   *    card (recorder.c, LOGxxxx.BIN) with a common 2000 Hz sequence number.
   *  - IMU data comes from the WT9011DCL-RF receiver attached to USB OTG FS
@@ -54,6 +55,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ad7606.h"
+#include "emg_filter.h"
 #include "dac8563.h"
 #include "serial.h"
 #include "cmd.h"
@@ -82,7 +84,7 @@ typedef enum
 #define IMU_COUNT                    4u      /* slaves with device_id 0..3        */
 #define IMU_FLOATS_PER_UNIT          6u      /* roll,pitch,yaw + ax,ay,az         */
 #define TX_META_FLOATS               3u      /* status + DAC A + DAC B (first)    */
-#define TX_CH_COUNT                  (TX_META_FLOATS + AD7606_TOTAL_CH + IMU_COUNT * IMU_FLOATS_PER_UNIT)
+#define TX_CH_COUNT                  (TX_META_FLOATS + (2u * AD7606_TOTAL_CH) + IMU_COUNT * IMU_FLOATS_PER_UNIT)
 #define TX_FRAME_LEN                 (TX_CH_COUNT * 4u + 4u)   /* floats + tail  */
 #define TX_DECIMATION                20u     /* 2000 Hz / 20 = 100 Hz on UART  */
 #define ADC_LSB_VOLTS                (5.0f / 32768.0f)         /* +/-5 V range   */
@@ -109,6 +111,7 @@ extern USBH_HandleTypeDef hUsbHostFS;
 volatile uint32_t g_sample_seq = 0u;        /* 2000 Hz tick, shared with recorder */
 static volatile uint8_t g_new_sample = 0u;  /* set by EXTI ISR after ADC read   */
 static int16_t  g_adc_values[AD7606_TOTAL_CH];
+static volatile float g_emg_filtered_volts[AD7606_TOTAL_CH];
 static float    g_tx_fdata[TX_CH_COUNT];
 static uint8_t  g_tx_frame[TX_FRAME_LEN];
 static const uint8_t g_tx_tail[4] = {0x00u, 0x00u, 0x80u, 0x7Fu};  /* JustFloat tail */
@@ -173,6 +176,7 @@ int main(void)
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
   AD7606_Init();
+  EMG_Filter_Init();
   DAC8563_Init();
 
   /* Boot-time status, printed once at reset (the JustFloat stream keeps
@@ -282,9 +286,10 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 /**
-  * @brief  Fill g_tx_frame with one JustFloat frame: 16 ADC channels in
-  *         volts, then for each IMU (id 0..3) roll/pitch/yaw in degrees and
-  *         ax/ay/az in g. IMU fields hold their last value between updates.
+  * @brief  Fill g_tx_frame with one JustFloat frame: 16 raw ADC channels in
+  *         volts, followed by 16 filtered sEMG channels in volts, then for
+  *         each IMU (id 0..3) roll/pitch/yaw in degrees and ax/ay/az in g.
+  *         IMU fields hold their last value between updates.
   */
 static void build_sample_frame(void)
 {
@@ -302,6 +307,10 @@ static void build_sample_frame(void)
   for (uint32_t i = 0u; i < AD7606_TOTAL_CH; i++)
   {
     g_tx_fdata[idx++] = (float)g_adc_values[i] * ADC_LSB_VOLTS;
+  }
+  for (uint32_t i = 0u; i < AD7606_TOTAL_CH; i++)
+  {
+    g_tx_fdata[idx++] = g_emg_filtered_volts[i];
   }
   __enable_irq();
 
@@ -500,7 +509,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   if (GPIO_Pin == AD1_BUSY_Pin)
   {
     AD7606_ReadAll((int16_t *)g_adc_values);
+    /* SD receives the untouched raw ADC frame.  Filtering is only for the
+       expanded USART telemetry frame and never changes g_adc_values. */
     Recorder_PushAdc(g_sample_seq, g_adc_values);
+    EMG_Filter_Process(g_adc_values, g_emg_filtered_volts);
     g_new_sample = 1u;
   }
 }

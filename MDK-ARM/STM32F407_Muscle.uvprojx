@@ -425,6 +425,11 @@
               <FilePath>../Core/Src/ad7606.c</FilePath>
             </File>
             <File>
+              <FileName>emg_filter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/emg_filter.c</FilePath>
+            </File>
+            <File>
               <FileName>dac8563.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/dac8563.c</FilePath>
